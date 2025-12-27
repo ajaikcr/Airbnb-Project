@@ -84,6 +84,12 @@ function routeHostGenie() {
     cleanupListingUI();
     cleanupMessageUI();
     observeCalendarChanges();
+
+    // Re-inject if we already have data
+    if (window.hostGenieContext.calendar.basePrice) {
+      injectHostGeniePanel(window.hostGenieContext.calendar);
+    }
+
     extractCalendarData();
     return;
   }
@@ -93,6 +99,12 @@ function routeHostGenie() {
     cleanupCalendarUI();
     cleanupMessageUI();
     observeListingChanges();
+
+    // Re-inject if we already have data
+    if (window.hostGenieContext.listing.title) {
+      injectListingPanel();
+    }
+
     return;
   }
 
@@ -101,6 +113,12 @@ function routeHostGenie() {
     cleanupCalendarUI();
     cleanupMessageUI();
     observeListingChanges();
+
+    // Re-inject if we already have data
+    if (window.hostGenieContext.listing.title) {
+      injectListingPanel();
+    }
+
     return;
   }
 
@@ -109,6 +127,12 @@ function routeHostGenie() {
     cleanupCalendarUI();
     cleanupListingUI();
     observeMessageChanges();
+
+    // Re-inject if we already have data
+    if (window.hostGenieContext.message.lastMessage) {
+      injectMessagePanel(window.hostGenieContext.message);
+    }
+
     return;
   }
 
@@ -234,6 +258,7 @@ function extractCalendarData() {
       }
 
       console.log("[HostGenie] Calendar data", window.hostGenieContext.calendar);
+      logConsolidatedState();
     }
   }, 300);
 }
@@ -304,6 +329,7 @@ function observeListingChanges() {
       injectListingPanel();
 
       console.log("[HostGenie] Listing data updated", data);
+      logConsolidatedState();
 
     }, 700);
   });
@@ -420,10 +446,20 @@ function extractListingEditorData() {
   // Helper: read LEFT PANEL cards
   // -----------------------------
   const getValueByLabel = label => {
+    // Return everything after the first line (label) joined by pipes
+    // Use a more relaxed search for card labels
     const card = [...document.querySelectorAll("div")]
-      .find(el =>
-        el.innerText?.trim().startsWith(label + "\n")
-      );
+      .find(el => {
+        const text = el.innerText?.trim() || "";
+        const lines = text.split("\n").map(l => l.trim()).filter(Boolean);
+        if (lines.length === 0) return false;
+
+        const firstLine = lines[0].toLowerCase();
+        const target = label.toLowerCase();
+
+        // Match if first line is exactly the label or starts with it
+        return firstLine === target || firstLine.startsWith(target + " ") || firstLine.startsWith(target + "\n");
+      });
 
     if (!card) return null;
 
@@ -432,8 +468,45 @@ function extractListingEditorData() {
       .map(l => l.trim())
       .filter(Boolean);
 
-    // First line = label, second line = value
-    return lines.length > 1 ? lines[1] : null;
+    return lines.length > 1 ? lines.slice(1).join(" | ") : null;
+  };
+
+  // -----------------------------
+  // NEW: Collect ALL other labels
+  // -----------------------------
+  const getAllOtherDetails = () => {
+    const details = {};
+    const allDivs = [...document.querySelectorAll("div")];
+
+    // Filter for elements that likely contain a label and its values
+    const potentialCards = allDivs.filter(el => {
+      const text = el.innerText?.trim();
+      // Heuristic for a card: has text, contains a newline, and is a reasonable size
+      // Increased max length to 5000 for long policies/descriptions
+      return text && text.includes("\n") && text.length < 5000 && text.length > 5;
+    });
+
+    potentialCards.forEach(card => {
+      const lines = card.innerText.split("\n").map(l => l.trim()).filter(Boolean);
+      if (lines.length >= 2) {
+        const label = lines[0];
+        const value = lines.slice(1).join(" | ");
+
+        // Skip labels we already handle specifically to avoid redundancy
+        const skip = [
+          "Title", "Property type", "Pricing", "Availability", "Number of guests",
+          "Description", "House rules", "Guest safety", "Cancellation policy",
+          "Location", "About the host", "Co-hosts", "Booking settings", "Custom link",
+          "Amenities", "Edit", "View", "Listing editor", "Your space", "Arrival guide"
+        ];
+
+        // Validate label: not too long, not too short, doesn't match skip list
+        if (label.length > 2 && label.length < 60 && !skip.some(s => label.toLowerCase().includes(s.toLowerCase()))) {
+          details[label] = value;
+        }
+      }
+    });
+    return details;
   };
 
   const listingData = {
@@ -442,7 +515,17 @@ function extractListingEditorData() {
     pricing: getValueByLabel("Pricing"),
     availability: getValueByLabel("Availability"),
     numberOfGuests: getValueByLabel("Number of guests"),
+    description: getValueByLabel("Description"),
+    houseRules: getValueByLabel("House rules"),
+    guestSafety: getValueByLabel("Guest safety"),
+    cancellationPolicy: getValueByLabel("Cancellation policy"),
+    location: getValueByLabel("Location"),
+    aboutHost: getValueByLabel("About the host"),
+    coHosts: getValueByLabel("Co-hosts"),
+    bookingSettings: getValueByLabel("Booking settings"),
+    customLink: getValueByLabel("Custom link"),
     amenities: getAmenitiesList(),
+    extraDetails: getAllOtherDetails(), // Capture everything else reliably
     extractedAt: new Date().toISOString(),
     source: "listing-editor"
   };
@@ -548,6 +631,7 @@ function extractMessageData() {
   injectMessagePanel(data);
 
   console.log("[HostGenie] Message data extracted", data);
+  logConsolidatedState();
 }
 
 // ----------------------------------------
@@ -567,8 +651,12 @@ function injectMessagePanel(data) {
         Host Genie – Message Insight
       </h3>
       <p><strong>Guest:</strong> ${data.guestName}</p>
-      <hr style="border:0;border-top:1px solid #eee;margin:8px 0" />
       <p style="font-style:italic;color:#555">"${data.lastMessage}"</p>
+      <button id="host-genie-download-btn" style="
+        margin-top: 10px; padding: 8px; width: 100%; 
+        background: #ff385c; color: white; border: none; 
+        border-radius: 8px; cursor: pointer; font-weight: bold;
+      ">Download for AI</button>
     </div>
   `;
 
@@ -585,6 +673,7 @@ function injectMessagePanel(data) {
   });
 
   document.body.appendChild(box);
+  document.getElementById("host-genie-download-btn")?.addEventListener("click", downloadConsolidatedData);
 }
 
 function cleanupMessageUI() {
@@ -615,6 +704,11 @@ function injectHostGeniePanel(data = {}) {
       <h3>Host Genie – Pricing Insight</h3>
       <p><strong>Airbnb:</strong> ₹${price}</p>
       ${originalRow}
+      <button id="host-genie-download-price-btn" style="
+        margin-top: 10px; padding: 8px; width: 100%; 
+        background: #ff385c; color: white; border: none; 
+        border-radius: 8px; cursor: pointer; font-weight: bold;
+      ">Download for AI</button>
     </div>
   `;
 
@@ -630,6 +724,7 @@ function injectHostGeniePanel(data = {}) {
   });
 
   document.body.appendChild(box);
+  document.getElementById("host-genie-download-price-btn")?.addEventListener("click", downloadConsolidatedData);
 }
 
 // ----------------------------------------
@@ -663,7 +758,12 @@ function injectListingPanel(data = null) {
     <p><strong>Guests:</strong> ${listingData.numberOfGuests || "Not set"}</p>
     <p><strong>Price:</strong> ${listingData.pricing || "Not set"}</p>
     <p><strong>Amenities:</strong> ${amenitiesText}</p>
-    <small style="color:#6b7280">
+    <button id="host-genie-download-listing-btn" style="
+        margin-top: 10px; padding: 8px; width: 100%; 
+        background: #ff385c; color: white; border: none; 
+        border-radius: 8px; cursor: pointer; font-weight: bold;
+    ">Download for AI</button>
+    <small style="color:#6b7280; display: block; margin-top: 5px;">
       ${listingData.source}
     </small>
   </div>
@@ -682,6 +782,7 @@ function injectListingPanel(data = null) {
   box.style.zIndex = "999999";
 
   document.body.appendChild(box);
+  document.getElementById("host-genie-download-listing-btn")?.addEventListener("click", downloadConsolidatedData);
 }
 
 
@@ -787,3 +888,92 @@ function parseDateRangeFromText(text) {
     return [];
   }
 }
+
+// ========================================
+// CONSOLIDATED DATA FOR AI
+// ========================================
+
+function getConsolidatedDataText() {
+  const ctx = window.hostGenieContext;
+  let text = "--- HOST GENIE CONSOLIDATED DATA ---\n\n";
+
+  // CALENDAR
+  text += "[CALENDAR]\n";
+  if (ctx.calendar.basePrice) {
+    text += `basePrice: ${ctx.calendar.basePrice}\n`;
+    text += `originalPrice: ${ctx.calendar.originalPrice || "N/A"}\n`;
+    text += `hasWeekend: ${ctx.calendar.hasWeekend}\n`;
+    text += `selectedDates: ${JSON.stringify(ctx.calendar.selectedDates)}\n`;
+  } else {
+    text += "No calendar data extracted yet.\n";
+  }
+  text += "\n";
+
+  // LISTING
+  text += "[LISTING]\n";
+  if (ctx.listing.title) {
+    text += `title: "${ctx.listing.title}"\n`;
+    text += `propertyType: "${ctx.listing.propertyType || "N/A"}"\n`;
+    text += `pricing: "${ctx.listing.pricing || "N/A"}"\n`;
+    text += `availability: "${ctx.listing.availability || "N/A"}"\n`;
+    text += `numberOfGuests: "${ctx.listing.numberOfGuests || "N/A"}"\n`;
+    text += `description: "${ctx.listing.description || "N/A"}"\n`;
+    text += `houseRules: "${ctx.listing.houseRules || "N/A"}"\n`;
+    text += `guestSafety: "${ctx.listing.guestSafety || "N/A"}"\n`;
+    text += `cancellationPolicy: "${ctx.listing.cancellationPolicy || "N/A"}"\n`;
+    text += `location: "${ctx.listing.location || "N/A"}"\n`;
+    text += `aboutHost: "${ctx.listing.aboutHost || "N/A"}"\n`;
+    text += `coHosts: "${ctx.listing.coHosts || "N/A"}"\n`;
+    text += `bookingSettings: "${ctx.listing.bookingSettings || "N/A"}"\n`;
+    text += `customLink: "${ctx.listing.customLink || "N/A"}"\n`;
+    text += `amenities: ${JSON.stringify(ctx.listing.amenities || [])}\n`;
+
+    // Extra Details (Rules, Policy, etc.)
+    if (ctx.listing.extraDetails) {
+      for (const [key, val] of Object.entries(ctx.listing.extraDetails)) {
+        text += `${key}: "${val}"\n`;
+      }
+    }
+
+    text += `source: "${ctx.listing.source || "N/A"}"\n`;
+  } else {
+    text += "No listing data extracted yet.\n";
+  }
+  text += "\n";
+
+  // MESSAGE
+  text += "[MESSAGE]\n";
+  if (ctx.message.lastMessage) {
+    text += `guestName: "${ctx.message.guestName || "Guest"}"\n`;
+    text += `lastMessage: "${ctx.message.lastMessage}"\n`;
+    text += `extractedAt: "${ctx.message.extractedAt}"\n`;
+  } else {
+    text += "No message data extracted yet.\n";
+  }
+
+  return text;
+}
+
+function logConsolidatedState() {
+  console.log("%c[HostGenie] Consolidated Data Updated", "color: #ff385c; font-weight: bold;");
+  console.log(window.hostGenieContext);
+  console.log(getConsolidatedDataText());
+}
+
+function downloadConsolidatedData() {
+  const text = getConsolidatedDataText();
+  const blob = new Blob([text], { type: "text/plain" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  a.href = url;
+  a.download = `host-genie-data-${timestamp}.txt`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+
+  console.log("[HostGenie] Data exported to file.");
+}
+

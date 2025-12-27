@@ -1,0 +1,27 @@
+{
+  "manifest_version": 3,
+  "name": "Host Genie — AI Co-Host for Airbnb",
+  "version": "0.1.0",
+  "description": "AI helper for Airbnb hosts",
+ "permissions": ["storage", "activeTab"],
+ "host_permissions": [
+  "https://www.airbnb.com/*",
+  "https://www.airbnb.co.in/*",
+  "http://localhost:3001/*"
+],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup/popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.airbnb.com/*",
+        "https://www.airbnb.co.in/*"
+      ],
+      "js": ["content/content_script.js"]
+    }
+  ]
+}

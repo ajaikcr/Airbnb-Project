@@ -569,58 +569,97 @@ function extractMessageData() {
   // Find the last message content
   // Airbnb messages are usually in divs. We look for the main chat container or just the last few text blocks.
 
-  // 1. Text scraping from what looks like the chat history
-  // Blocklist common hidden labels or non-message text
-  const blocklist = [
-    "Current Domain", "Show details", "Translate", "Original language",
-    "Report", "Signer.Digital", "Resource Centre", "What happens after",
-    "Switch to hosting", "Switch to travelling", "Read Conversation",
-    "Last message sent"
-  ];
+  // 1. Detect Guest Name FIRST
+  let guestName = document.querySelector("h2")?.innerText?.trim() || "Guest";
+  const nameParts = guestName.split(/\s+/);
+  if (nameParts.length === 2 && nameParts[0] === nameParts[1]) {
+    guestName = nameParts[0];
+  } else {
+    guestName = [...new Set(nameParts)].join(" ");
+  }
+
+  // Define Noise Filtering
+  const isNoise = (text) => {
+    const exactMatches = [
+      "Today", "Calendar", "Listings", "Messages",
+      "All", "Unread", "Superhost Ambassador", "Translate",
+      "Original language", "Report", "Read Conversation",
+      "Show details", "Edit", "Learn More", "Select Certificate",
+      "Smartcard / Token User Pin", "Return to Inbox", "Write a message...", "Send",
+      "Skip to Last Message (Ctrl-e)", "Skip to Typing Your Message (Ctrl-m)",
+      guestName, guestName + " " + guestName
+    ];
+    if (exactMatches.includes(text)) return true;
+
+    const prefixes = [
+      "Current Domain", "Signer.Digital", "Resource Centre",
+      "What happens after", "Switch to hosting", "Switch to travelling",
+      "Last message sent", "You're now matched with"
+    ];
+    if (prefixes.some(p => text.startsWith(p))) return true;
+
+    return false;
+  };
 
   // Added 'p' tag as messages often use paragraphs
-  const allTextBlocks = [...document.querySelectorAll('div[dir="ltr"], div[dir="rtl"], span, p')]
-    .filter(el => !el.closest("#host-genie-message-box")) // CRITICAL: Don't read our own panel
-    .map(el => el.innerText?.trim())
-    .filter(t =>
-      t &&
-      t.length > 5 &&
-      t.length < 10000 && // Increased limit significantly for long messages
-      !blocklist.some(b => t.includes(b)) && // stricter check
-      !t.startsWith("http")
+  const allTextElements = [...document.querySelectorAll('div[dir="ltr"], div[dir="rtl"], span, p')]
+    .filter(el => !el.closest("#host-genie-message-box")); // CRITICAL: Don't read our own panel
+
+  const validBlocks = allTextElements
+    .map(el => ({
+      text: el.innerText?.trim(),
+      // Check if it's aligned right (Host usually) or left (Guest usually)
+      isRight: window.getComputedStyle(el).textAlign === 'right' || el.closest('[style*="flex-end"]') !== null
+    }))
+    .filter(b =>
+      b.text &&
+      b.text.length > 2 &&
+      !isNoise(b.text) &&
+      !b.text.startsWith("http") &&
+      // Filter out guest names that appear as labels
+      b.text !== guestName &&
+      !b.text.includes(guestName + " " + guestName)
     );
 
-  if (!allTextBlocks.length) return;
+  if (!validBlocks.length) return;
 
-  // STRATEGY: Longest Text Block
-  // Chat messages are usually the longest continuous text on the screen.
-  // We sort by length descending to find the main message content.
-  allTextBlocks.sort((a, b) => b.length - a.length);
+  // Deduplicate: Airbnb sometimes repeats symbols/text in different tags for the same bubble
+  const deduplicated = [];
+  let lastText = "";
+  validBlocks.forEach(b => {
+    // Only add if it's not a duplicate. 
+    // Handle cases where one string contains the other (like "Sangeeta" then "Sangeeta Sangeeta")
+    const isDuplicate = deduplicated.some(prev =>
+      prev.text === b.text ||
+      (prev.text.includes(b.text) && b.text.length < 15) ||
+      (b.text.includes(prev.text) && prev.text.length < 15)
+    );
 
-  const lastMessage = allTextBlocks[0]; // The longest block
+    if (!isDuplicate) {
+      deduplicated.push(b);
+      lastText = b.text;
+    }
+  });
 
-  // Detect Guest Name (from sidebar or header)
-  // Fix duplication "Sangeeta Sangeeta"
-  let guestName = document.querySelector("h2")?.innerText?.trim() || "Guest";
+  // Latest message (longest block in the thread often works best for the summary)
+  const sortedByLength = [...deduplicated].sort((a, b) => b.text.length - a.text.length);
+  const lastMessage = sortedByLength[0].text;
 
-  // Clean duplication
-  const parts = guestName.split(/\s+/);
-  if (parts.length === 2 && parts[0] === parts[1]) {
-    guestName = parts[0];
-  } else {
-    // General dedupe: "Vivek Vivek" -> "Vivek"
-    guestName = [...new Set(parts)].join(" ");
-  }
+  // Build full chat log
+  const fullChat = deduplicated.map(b => b.text).join("\n---\n");
+
+
 
   const data = {
     guestName,
     lastMessage,
+    fullChat,
     extractedAt: new Date().toISOString()
   };
 
   // CRITICAL FIX: Do NOT include 'extractedAt' in the signature check.
   // Otherwise, the timestamp changes every time, causing an infinite loop.
-  const signature = JSON.stringify({ guestName, lastMessage });
+  const signature = JSON.stringify({ guestName, lastMessage, fullChatLength: (fullChat || "").length });
 
   if (signature === lastMessageSignature) return;
   lastMessageSignature = signature;
@@ -645,17 +684,37 @@ function injectMessagePanel(data) {
   const box = document.createElement("div");
   box.id = "host-genie-message-box";
 
+  // Split history if exists
+  const history = data.fullChat ? data.fullChat.split("\n---\n") : [];
+  const latest = history.length > 0 ? history[history.length - 1] : data.lastMessage;
+  const previous = history.length > 1 ? history.slice(0, -1).reverse() : [];
+
   box.innerHTML = `
-    <div style="padding:14px">
-      <h3 style="color:#ff385c;font-size:14px">
+    <div style="padding:14px; display: flex; flex-direction: column; max-height: 500px;">
+      <h3 style="color:#ff385c;font-size:14px; margin-top: 0;">
         Host Genie – Message Insight
       </h3>
-      <p><strong>Guest:</strong> ${data.guestName}</p>
-      <p style="font-style:italic;color:#555">"${data.lastMessage}"</p>
+      <p style="margin: 4px 0;"><strong>Guest:</strong> ${data.guestName}</p>
+      
+      <div style="margin-top: 10px;">
+        <strong style="font-size: 11px; color: #717171; text-transform: uppercase;">Latest Message</strong>
+        <p style="margin: 4px 0; font-weight: 500; line-height: 1.4;">${latest}</p>
+      </div>
+
+      ${previous.length > 0 ? `
+        <div style="margin-top: 12px; border-top: 1px solid #eee; padding-top: 10px;">
+          <strong style="font-size: 11px; color: #717171; text-transform: uppercase;">Previous Conversation</strong>
+          <div style="max-height: 200px; overflow-y: auto; margin-top: 6px; padding-right: 4px; font-size: 13px; color: #484848;">
+            ${previous.map(msg => `<div style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #f7f7f7; line-height: 1.4;">${msg}</div>`).join("")}
+          </div>
+        </div>
+      ` : ""}
+
       <button id="host-genie-download-btn" style="
-        margin-top: 10px; padding: 8px; width: 100%; 
+        margin-top: 14px; padding: 10px; width: 100%; 
         background: #ff385c; color: white; border: none; 
         border-radius: 8px; cursor: pointer; font-weight: bold;
+        transition: background 0.2s;
       ">Download for AI</button>
     </div>
   `;
@@ -664,12 +723,13 @@ function injectMessagePanel(data) {
     position: "fixed",
     top: "120px",
     right: "24px",
-    width: "300px",
+    width: "320px",
     background: "#fff",
-    borderRadius: "12px",
-    boxShadow: "0 12px 30px rgba(0,0,0,0.15)",
+    borderRadius: "16px",
+    boxShadow: "0 16px 40px rgba(0,0,0,0.2)",
     zIndex: "999999",
-    border: "1px solid #e5e7eb"
+    border: "1px solid #e5e7eb",
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
   });
 
   document.body.appendChild(box);
@@ -946,6 +1006,7 @@ function getConsolidatedDataText() {
   if (ctx.message.lastMessage) {
     text += `guestName: "${ctx.message.guestName || "Guest"}"\n`;
     text += `lastMessage: "${ctx.message.lastMessage}"\n`;
+    text += `fullChat:\n${ctx.message.fullChat || "N/A"}\n`;
     text += `extractedAt: "${ctx.message.extractedAt}"\n`;
   } else {
     text += "No message data extracted yet.\n";

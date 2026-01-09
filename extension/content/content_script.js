@@ -669,7 +669,14 @@ function extractMessageData() {
   cleanupMessageUI();
   injectMessagePanel(data);
 
-  console.log("[HostGenie] Message data extracted", data);
+  // BRIDGE TRIGGER: Notify the background script of the new message event
+  // We pass the full consolidated context to ensure the agent is stateless/disposable.
+  chrome.runtime.sendMessage({
+    type: "EVENT_NEW_MESSAGE",
+    payload: getConsolidatedDataText()
+  });
+
+  console.log("[HostGenie] Message data extracted and relayed to bridge", data);
   logConsolidatedState();
 }
 
@@ -710,12 +717,29 @@ function injectMessagePanel(data) {
         </div>
       ` : ""}
 
-      <button id="host-genie-download-btn" style="
+      <button id="host-genie-reply-btn" style="
         margin-top: 14px; padding: 10px; width: 100%; 
-        background: #ff385c; color: white; border: none; 
+        background: #000; color: white; border: none; 
         border-radius: 8px; cursor: pointer; font-weight: bold;
         transition: background 0.2s;
-      ">Download for AI</button>
+      ">Generate AI Reply</button>
+
+      <button id="host-genie-download-btn" style="
+        margin-top: 8px; padding: 10px; width: 100%; 
+        background: #fff; color: #484848; border: 1px solid #484848; 
+        border-radius: 8px; cursor: pointer; font-weight: bold;
+        transition: background 0.2s;
+      ">Download Context</button>
+
+      <div id="host-genie-ai-response" style="
+        display: none; margin-top: 14px; padding: 12px; 
+        background: #f7f7f7; border-radius: 8px; 
+        font-size: 13px; border: 1px solid #e5e7eb;
+        max-height: 200px; overflow-y: auto;
+      ">
+        <strong style="display:block; margin-bottom: 4px; font-size: 11px; color: #717171; text-transform: uppercase;">AI Suggestion</strong>
+        <div id="host-genie-ai-text" style="white-space: pre-wrap; line-height: 1.5; color: #222;"></div>
+      </div>
     </div>
   `;
 
@@ -734,6 +758,12 @@ function injectMessagePanel(data) {
 
   document.body.appendChild(box);
   document.getElementById("host-genie-download-btn")?.addEventListener("click", downloadConsolidatedData);
+  document.getElementById("host-genie-reply-btn")?.addEventListener("click", () => {
+    chrome.runtime.sendMessage({
+      type: "ACTION_GENERATE_REPLY",
+      payload: getConsolidatedDataText()
+    });
+  });
 }
 
 function cleanupMessageUI() {
@@ -1036,5 +1066,80 @@ function downloadConsolidatedData() {
   URL.revokeObjectURL(url);
 
   console.log("[HostGenie] Data exported to file.");
+}
+
+// ----------------------------------------
+// BRIDGE RESPONSE HANDLERS
+// ----------------------------------------
+chrome.runtime.onMessage.addListener((msg) => {
+  const responseBox = document.getElementById("host-genie-ai-response");
+  const textBox = document.getElementById("host-genie-ai-text");
+
+  if (msg.type === "AI_REPLY_START") {
+    if (responseBox) responseBox.style.display = "block";
+    if (textBox) {
+      textBox.innerText = "Thinking...";
+      textBox.style.color = "#717171";
+    }
+  }
+
+  if (msg.type === "AI_REPLY_FULL") {
+    const reply = msg.payload;
+
+    // 1. Update the Host Genie UI
+    if (textBox) {
+      textBox.innerText = reply;
+      textBox.style.color = "#222";
+
+      // Auto-scroll to bottom
+      if (responseBox) responseBox.scrollTop = responseBox.scrollHeight;
+    }
+
+    // 2. Fill the Airbnb message box
+    fillAirbnbMessageBox(reply);
+
+    console.log("[HostGenie] AI Reply received and message box filled");
+  }
+
+  if (msg.type === "AI_REPLY_ERROR") {
+    if (textBox) {
+      textBox.innerText = "Error: " + msg.payload;
+      textBox.style.color = "#ff385c";
+    }
+  }
+});
+
+/**
+ * Fills the Airbnb message box with the provided text.
+ * Handles contenteditable and triggers necessary events for Airbnb's UI to react.
+ */
+function fillAirbnbMessageBox(text) {
+  // Try multiple selectors to be robust
+  const messageBox =
+    document.getElementById("message_input") ||
+    document.querySelector('[data-testid="messaging-composebar"]') ||
+    document.querySelector('div[role="textbox"][aria-label="Write a message..."]');
+
+  if (!messageBox) {
+    console.error("[HostGenie] Could not find Airbnb message box");
+    return;
+  }
+
+  // Focus the element first
+  messageBox.focus();
+
+  // Set the text
+  // For contenteditable, we can use innerText or textContent
+  messageBox.innerText = text;
+
+  // Trigger input event so Airbnb's React/internal state updates
+  const inputEvent = new Event('input', { bubbles: true });
+  messageBox.dispatchEvent(inputEvent);
+
+  // Some frameworks also listen for 'change'
+  const changeEvent = new Event('change', { bubbles: true });
+  messageBox.dispatchEvent(changeEvent);
+
+  console.log("[HostGenie] Message box filled successfully");
 }
 

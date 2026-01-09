@@ -588,6 +588,10 @@ function extractMessageData() {
     document.querySelector('main, section[role="main"]') ||
     document.body;
 
+  // 1.6 Identify the header area to EXCLUDE it (skip labels like "Nabhas Booker")
+  const headerArea = nameHeader?.closest('div[role="heading"], div[style*="border-bottom"]') ||
+    document.querySelector('div[aria-label="Messages"] > div:first-child');
+
   // 2. Define Noise Filtering (Strict)
   const isNoise = (text) => {
     // Exact matches for dates and UI buttons
@@ -617,13 +621,14 @@ function extractMessageData() {
     return false;
   };
 
-  // 3. Extract and EXCLUDE sidebar explicitly if we fell back to document.body
+  // 3. Extract and EXCLUDE sidebar AND header explicitly
   const sidebar = document.querySelector('nav, aside, [aria-label="Threads"], [aria-label="All messages"]');
 
   const allTextElements = [...mainChatArea.querySelectorAll('div[dir="ltr"], div[dir="rtl"], span, p')]
     .filter(el => {
       if (el.closest("#host-genie-message-box")) return false;
       if (sidebar && sidebar.contains(el)) return false; // DONT READ SIDEBAR
+      if (headerArea && headerArea.contains(el)) return false; // DONT READ HEADER (FIX: "Nabhas Nabhas" issue)
       return true;
     });
 
@@ -641,18 +646,15 @@ function extractMessageData() {
       // Filter out guest names that appear as labels or headers
       b.text.trim() !== guestName &&
       !b.text.includes(guestName + " " + guestName) &&
-      // Specifically filter out common sidebar bubble texts "Nabhas Booker" etc
-      !/^[A-Z][a-z]+ [A-Z][a-z]+$/.test(b.text) // This might be too aggressive, refine
+      // Specifically filter out common sidebar bubble texts or header repeats
+      !/^[A-Z][a-z]+ [A-Z][a-z]+$/.test(b.text)
     );
 
   if (!validBlocks.length) return;
 
-  // Deduplicate: Airbnb sometimes repeats symbols/text in different tags for the same bubble
+  // Deduplicate
   const deduplicated = [];
-  let lastText = "";
   validBlocks.forEach(b => {
-    // Only add if it's not a duplicate. 
-    // Handle cases where one string contains the other (like "Sangeeta" then "Sangeeta Sangeeta")
     const isDuplicate = deduplicated.some(prev =>
       prev.text === b.text ||
       (prev.text.includes(b.text) && b.text.length < 15) ||
@@ -661,18 +663,15 @@ function extractMessageData() {
 
     if (!isDuplicate) {
       deduplicated.push(b);
-      lastText = b.text;
     }
   });
 
-  // Latest message (longest block in the thread often works best for the summary)
+  // Latest message
   const sortedByLength = [...deduplicated].sort((a, b) => b.text.length - a.text.length);
   const lastMessage = sortedByLength[0].text;
 
   // Build full chat log
   const fullChat = deduplicated.map(b => b.text).join("\n---\n");
-
-
 
   const data = {
     guestName,
@@ -681,8 +680,6 @@ function extractMessageData() {
     extractedAt: new Date().toISOString()
   };
 
-  // CRITICAL FIX: Do NOT include 'extractedAt' in the signature check.
-  // Otherwise, the timestamp changes every time, causing an infinite loop.
   const signature = JSON.stringify({ guestName, lastMessage, fullChatLength: (fullChat || "").length });
 
   if (signature === lastMessageSignature) return;
@@ -693,14 +690,17 @@ function extractMessageData() {
   cleanupMessageUI();
   injectMessagePanel(data);
 
-  // BRIDGE TRIGGER: Notify the background script of the new message event
-  // We pass the full consolidated context to ensure the agent is stateless/disposable.
+  // ULTRA CLEAN CONSOLE LOG FOR USER
+  console.log(`%c[HostGenie] Chat History for: ${guestName}`, "color: #ff385c; font-weight: bold; font-size: 14px;");
+  console.log(fullChat);
+
+  // BRIDGE TRIGGER
   chrome.runtime.sendMessage({
     type: "EVENT_NEW_MESSAGE",
     payload: getConsolidatedDataText()
   });
 
-  console.log("[HostGenie] Message data extracted and relayed to bridge", data);
+  console.log("[HostGenie] Message data relayed to bridge");
   logConsolidatedState();
 }
 

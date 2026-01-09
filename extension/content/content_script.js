@@ -29,6 +29,9 @@ let lastCalendarSignature = null;
 let lastListingSignature = null;
 let lastMessageSignature = null;
 
+// UI State
+let isPanelMinimized = false;
+
 // Runtime context
 window.hostGenieContext = {
   pageType: null,
@@ -635,9 +638,11 @@ function extractMessageData() {
       b.text.length > 2 &&
       !isNoise(b.text) &&
       !b.text.startsWith("http") &&
-      // Filter out guest names that appear as labels
-      b.text !== guestName &&
-      !b.text.includes(guestName + " " + guestName)
+      // Filter out guest names that appear as labels or headers
+      b.text.trim() !== guestName &&
+      !b.text.includes(guestName + " " + guestName) &&
+      // Specifically filter out common sidebar bubble texts "Nabhas Booker" etc
+      !/^[A-Z][a-z]+ [A-Z][a-z]+$/.test(b.text) // This might be too aggressive, refine
     );
 
   if (!validBlocks.length) return;
@@ -716,7 +721,19 @@ function injectMessagePanel(data) {
   const previous = history.length > 1 ? history.slice(0, -1).reverse() : [];
 
   box.innerHTML = `
-    <div style="padding:14px; display: flex; flex-direction: column; max-height: 500px;">
+    <!-- Toggle Handle -->
+    <div id="host-genie-toggle" style="
+      position: absolute; left: -30px; top: 20px; 
+      width: 30px; height: 40px; background: #ff385c; 
+      color: white; display: flex; align-items: center; 
+      justify-content: center; border-radius: 8px 0 0 8px; 
+      cursor: pointer; box-shadow: -4px 0 10px rgba(0,0,0,0.1);
+      font-weight: bold; font-size: 16px;
+    ">
+      ${isPanelMinimized ? "◀" : "▶"}
+    </div>
+
+    <div id="host-genie-content" style="padding:14px; display: flex; flex-direction: column; max-height: 500px; transition: opacity 0.3s; ${isPanelMinimized ? "opacity: 0; pointer-events: none;" : ""}">
       <h3 style="color:#ff385c;font-size:14px; margin-top: 0;">
         Host Genie – Message Insight
       </h3>
@@ -771,11 +788,34 @@ function injectMessagePanel(data) {
     borderRadius: "16px",
     boxShadow: "0 16px 40px rgba(0,0,0,0.2)",
     zIndex: "999999",
-    border: "1px solid #e5e7eb",
+    transform: isPanelMinimized ? "translateX(310px)" : "translateX(0)",
+    transition: "transform 0.4s cubic-bezier(0.19, 1, 0.22, 1)",
     fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
   });
 
   document.body.appendChild(box);
+
+  // Toggle Listener
+  document.getElementById("host-genie-toggle")?.addEventListener("click", () => {
+    isPanelMinimized = !isPanelMinimized;
+    const box = document.getElementById("host-genie-message-box");
+    const toggle = document.getElementById("host-genie-toggle");
+    const content = document.getElementById("host-genie-content");
+
+    if (box && toggle && content) {
+      if (isPanelMinimized) {
+        box.style.transform = "translateX(310px)";
+        toggle.innerText = "◀";
+        content.style.opacity = "0";
+        content.style.pointerEvents = "none";
+      } else {
+        box.style.transform = "translateX(0)";
+        toggle.innerText = "▶";
+        content.style.opacity = "1";
+        content.style.pointerEvents = "auto";
+      }
+    }
+  });
   document.getElementById("host-genie-download-btn")?.addEventListener("click", downloadConsolidatedData);
   document.getElementById("host-genie-reply-btn")?.addEventListener("click", () => {
     chrome.runtime.sendMessage({

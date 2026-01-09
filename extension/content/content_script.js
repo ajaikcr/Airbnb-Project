@@ -569,22 +569,45 @@ function observeMessageChanges() {
 function extractMessageData() {
   if (window.hostGenieContext.pageType !== "messages") return;
 
-  // 1. Find the "Write a Message" input box (The Anchor)
-  // We search for elements that look like the message input field
-  const allInputs = [...document.querySelectorAll('textarea, div[role="textbox"], span, div')];
-  const messageBox = allInputs.find(el => {
-    const placeholder = el.getAttribute('placeholder') || '';
-    const text = el.innerText || '';
-    return placeholder.toLowerCase().includes("write a message") ||
-      text.toLowerCase().includes("write a message");
-  });
+  // 1. Find the Anchor (Input or Header)
+  const findAnchor = () => {
+    // A. Direct input with aria-labels or placeholders
+    const ariaMatch = document.querySelector('[aria-label*="Write a message"], [aria-placeholder*="Write a message"]');
+    if (ariaMatch) return ariaMatch;
 
-  // 2. Identify the Active Chat Pane
-  const mainChatArea = messageBox?.closest('section, main, [role="main"]') ||
-    document.querySelector('div[aria-label="Messages"]');
+    // B. Broad search for any textbox or textarea with placeholder
+    const allTextInputs = [...document.querySelectorAll('textarea, [role="textbox"], input')];
+    const textInput = allTextInputs.find(el => {
+      const p = el.getAttribute('placeholder') || el.getAttribute('aria-placeholder') || '';
+      return p.toLowerCase().includes("write a message");
+    });
+    if (textInput) return textInput;
+
+    // C. Broad text search for "Write a message" (sometimes in a div/span)
+    const allDivs = [...document.querySelectorAll('div, span, button')];
+    const textMatch = allDivs.find(el => el.innerText?.toLowerCase().includes("write a message"));
+    if (textMatch) return textMatch;
+
+    return null;
+  };
+
+  const anchor = findAnchor();
+  let mainChatArea = anchor?.closest('section, main, [role="main"], div[aria-label="Messages"]');
+
+  // 2. Header Fallback (If input anchor fails)
+  if (!mainChatArea) {
+    console.log("[HostGenie] Input anchor failed. Trying header fallback...");
+    // Find h2 that is NOT in the sidebar
+    const allH2s = [...document.querySelectorAll('h2')];
+    const activeH2 = allH2s.find(h2 => {
+      const sidebar = h2.closest('nav, aside, [aria-label="Threads"], [aria-label="All messages"]');
+      return !sidebar;
+    });
+    mainChatArea = activeH2?.closest('section, main, [role="main"], div[aria-label="Messages"]');
+  }
 
   if (!mainChatArea) {
-    console.log("%c[HostGenie] ERROR: Could not find active chat pane anchored to message input.", "color: orange; font-weight: bold;");
+    console.log("%c[HostGenie] ERROR: Could not find active chat pane using any method.", "color: orange; font-weight: bold;");
     return;
   }
   console.log("%c[HostGenie] Active chat pane isolated successfully.", "color: green; font-weight: bold;");
@@ -603,14 +626,11 @@ function extractMessageData() {
 
   if (guestName === "Guest" || !guestName) {
     console.log("[HostGenie] Skipping extraction: Valid guest name not detected in active pane.");
-    // Try to find ANY guest name if the pane failed
-    const globalName = document.querySelector('h2')?.innerText;
-    if (globalName) console.log(`[HostGenie] Found global h2 "${globalName}" but it's not andhor-verified. Skipping to avoid leak.`);
     return;
   }
 
   // 4. Identify the header area to EXCLUDE it
-  const headerArea = nameHeader?.closest('div[style*="border-bottom"]') ||
+  const headerArea = nameHeader?.closest('div[style*="border-bottom"], div[role="heading"]') ||
     mainChatArea.querySelector('div:first-child');
 
   // 2. Define Noise Filtering (Strict)

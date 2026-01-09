@@ -578,7 +578,13 @@ function extractMessageData() {
     guestName = [...new Set(nameParts)].join(" ");
   }
 
-  // Define Noise Filtering
+  // 1.5 Target the main chat area to avoid picking up sidebar contacts
+  // Airbnb uses role="main" for the central pane, or a specific aria-label
+  const mainChatArea = document.querySelector('section[role="main"], div[role="main"], main') ||
+    document.querySelector('div[aria-label="Messages"]') ||
+    document.body;
+
+  // 2. Define Noise Filtering
   const isNoise = (text) => {
     const exactMatches = [
       "Today", "Calendar", "Listings", "Messages",
@@ -594,15 +600,16 @@ function extractMessageData() {
     const prefixes = [
       "Current Domain", "Signer.Digital", "Resource Centre",
       "What happens after", "Switch to hosting", "Switch to travelling",
-      "Last message sent", "You're now matched with"
+      "Last message sent", "You're now matched with",
+      "Read Conversation with" // Added to filter out sidebar contact labels
     ];
     if (prefixes.some(p => text.startsWith(p))) return true;
 
     return false;
   };
 
-  // Added 'p' tag as messages often use paragraphs
-  const allTextElements = [...document.querySelectorAll('div[dir="ltr"], div[dir="rtl"], span, p')]
+  // 3. Extract from mainChatArea only
+  const allTextElements = [...mainChatArea.querySelectorAll('div[dir="ltr"], div[dir="rtl"], span, p')]
     .filter(el => !el.closest("#host-genie-message-box")); // CRITICAL: Don't read our own panel
 
   const validBlocks = allTextElements

@@ -569,11 +569,28 @@ function observeMessageChanges() {
 function extractMessageData() {
   if (window.hostGenieContext.pageType !== "messages") return;
 
-  // Find the last message content
-  // Airbnb messages are usually in divs. We look for the main chat container or just the last few text blocks.
+  // 1. Target the ACTIVE CHAT AREA via the message input
+  // This is the most reliable anchor for the guest you are actually talking to.
+  const messageInput = document.querySelector('textarea[placeholder*="message"], [id*="message"], [name*="message"]');
+  const mainChatArea = messageInput?.closest('section, main, div[role="main"]') ||
+    document.querySelector('main, section[role="main"]');
 
-  // 1. Detect Guest Name FIRST
-  let guestName = document.querySelector("h2")?.innerText?.trim() || "Guest";
+  if (!mainChatArea) {
+    console.log("[HostGenie] No active chat area found via input anchor.");
+    return;
+  }
+
+  // 2. Detect Guest Name ONLY from the active chat header
+  const nameHeader = mainChatArea.querySelector("h2");
+  let guestName = nameHeader?.innerText?.trim() || "Guest";
+
+  if (guestName === "Guest") {
+    // Try one more specific selector for the header name
+    const altName = mainChatArea.querySelector('span[role="heading"], div[role="heading"] span');
+    if (altName) guestName = altName.innerText.trim();
+  }
+
+  // Cleanup name (e.g. "Nabhas Nabhas" -> "Nabhas")
   const nameParts = guestName.split(/\s+/);
   if (nameParts.length === 2 && nameParts[0] === nameParts[1]) {
     guestName = nameParts[0];
@@ -581,16 +598,14 @@ function extractMessageData() {
     guestName = [...new Set(nameParts)].join(" ");
   }
 
-  // 1.5 Target the main chat area MORE ROBUSTLY
-  // We try to find the container that contains the Guest Name H2
-  const nameHeader = document.querySelector("h2");
-  const mainChatArea = nameHeader?.closest('section, main, div[role="main"]') ||
-    document.querySelector('main, section[role="main"]') ||
-    document.body;
+  if (guestName === "Guest") {
+    console.log("[HostGenie] Skipping extraction: Valid guest name not detected.");
+    return;
+  }
 
-  // 1.6 Identify the header area to EXCLUDE it (skip labels like "Nabhas Booker")
+  // 3. Identify the header area to EXCLUDE it (skip labels like "Nabhas Booker")
   const headerArea = nameHeader?.closest('div[role="heading"], div[style*="border-bottom"]') ||
-    document.querySelector('div[aria-label="Messages"] > div:first-child');
+    mainChatArea.querySelector('div:first-child');
 
   // 2. Define Noise Filtering (Strict)
   const isNoise = (text) => {

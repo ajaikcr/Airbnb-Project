@@ -594,7 +594,16 @@ function extractMessageData() {
 
   // 2. Define Noise Filtering (Strict)
   const isNoise = (text) => {
-    // Exact matches for dates and UI buttons
+    // 2.1 Timestamps (e.g. 8:16 PM, 22:50, 08:30)
+    if (/^\d{1,2}:\d{2}\s?(AM|PM)?$/i.test(text)) return true;
+
+    // 2.2 Guest Name exact match or repetition including with "Booker"
+    const lowerText = text.toLowerCase();
+    const lowerName = guestName.toLowerCase();
+    if (text.trim() === guestName || text.includes(guestName + " " + guestName)) return true;
+    if (lowerText.includes(lowerName) && (lowerText.includes("booker") || lowerText.includes("guest"))) return true;
+
+    // 2.3 Exact matches for dates and UI buttons
     const exactMatches = [
       "Today", "Yesterday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
       "Calendar", "Listings", "Messages", "All", "Unread", "Superhost Ambassador",
@@ -602,11 +611,11 @@ function extractMessageData() {
       "Show details", "Edit", "Learn More", "Select Certificate",
       "Smartcard / Token User Pin", "Return to Inbox", "Write a message...", "Send",
       "Skip to Last Message (Ctrl-e)", "Skip to Typing Your Message (Ctrl-m)",
-      guestName, guestName + " " + guestName
+      "Translation on", "Translation off"
     ];
     if (exactMatches.includes(text)) return true;
 
-    // Prefixes for system/sidebar labels
+    // 2.4 Prefixes for system/sidebar labels
     const prefixes = [
       "Current Domain", "Signer.Digital", "Resource Centre",
       "What happens after", "Switch to hosting", "Switch to travelling",
@@ -624,11 +633,19 @@ function extractMessageData() {
   // 3. Extract and EXCLUDE sidebar AND header explicitly
   const sidebar = document.querySelector('nav, aside, [aria-label="Threads"], [aria-label="All messages"]');
 
+  // Targeted search: focusing on elements that ARE likely message bubbles
+  // Airbnb bubbles usually have dir="ltr" or specific test-ids
   const allTextElements = [...mainChatArea.querySelectorAll('div[dir="ltr"], div[dir="rtl"], span, p')]
     .filter(el => {
       if (el.closest("#host-genie-message-box")) return false;
       if (sidebar && sidebar.contains(el)) return false; // DONT READ SIDEBAR
-      if (headerArea && headerArea.contains(el)) return false; // DONT READ HEADER (FIX: "Nabhas Nabhas" issue)
+      if (headerArea && headerArea.contains(el)) return false; // DONT READ HEADER
+
+      // Heuristic: filter out small spans that are likely labels if they are nested in headers 
+      // even if they weren't caught by headerArea
+      const parentHeader = el.closest('h1, h2, h3, [role="heading"]');
+      if (parentHeader) return false;
+
       return true;
     });
 
@@ -642,12 +659,7 @@ function extractMessageData() {
       b.text &&
       b.text.length > 2 &&
       !isNoise(b.text) &&
-      !b.text.startsWith("http") &&
-      // Filter out guest names that appear as labels or headers
-      b.text.trim() !== guestName &&
-      !b.text.includes(guestName + " " + guestName) &&
-      // Specifically filter out common sidebar bubble texts or header repeats
-      !/^[A-Z][a-z]+ [A-Z][a-z]+$/.test(b.text)
+      !b.text.startsWith("http")
     );
 
   if (!validBlocks.length) return;

@@ -578,18 +578,20 @@ function extractMessageData() {
     guestName = [...new Set(nameParts)].join(" ");
   }
 
-  // 1.5 Target the main chat area to avoid picking up sidebar contacts
-  // Airbnb uses role="main" for the central pane, or a specific aria-label
-  const mainChatArea = document.querySelector('section[role="main"], div[role="main"], main') ||
-    document.querySelector('div[aria-label="Messages"]') ||
+  // 1.5 Target the main chat area MORE ROBUSTLY
+  // We try to find the container that contains the Guest Name H2
+  const nameHeader = document.querySelector("h2");
+  const mainChatArea = nameHeader?.closest('section, main, div[role="main"]') ||
+    document.querySelector('main, section[role="main"]') ||
     document.body;
 
-  // 2. Define Noise Filtering
+  // 2. Define Noise Filtering (Strict)
   const isNoise = (text) => {
+    // Exact matches for dates and UI buttons
     const exactMatches = [
-      "Today", "Calendar", "Listings", "Messages",
-      "All", "Unread", "Superhost Ambassador", "Translate",
-      "Original language", "Report", "Read Conversation",
+      "Today", "Yesterday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
+      "Calendar", "Listings", "Messages", "All", "Unread", "Superhost Ambassador",
+      "Translate", "Original language", "Report", "Read Conversation",
       "Show details", "Edit", "Learn More", "Select Certificate",
       "Smartcard / Token User Pin", "Return to Inbox", "Write a message...", "Send",
       "Skip to Last Message (Ctrl-e)", "Skip to Typing Your Message (Ctrl-m)",
@@ -597,20 +599,30 @@ function extractMessageData() {
     ];
     if (exactMatches.includes(text)) return true;
 
+    // Prefixes for system/sidebar labels
     const prefixes = [
       "Current Domain", "Signer.Digital", "Resource Centre",
       "What happens after", "Switch to hosting", "Switch to travelling",
       "Last message sent", "You're now matched with",
-      "Read Conversation with" // Added to filter out sidebar contact labels
+      "Read Conversation with", // Sidebar contact labels
+      "Enquiry sent",
+      "Reservation from",
+      "Enquiry for"
     ];
     if (prefixes.some(p => text.startsWith(p))) return true;
 
     return false;
   };
 
-  // 3. Extract from mainChatArea only
+  // 3. Extract and EXCLUDE sidebar explicitly if we fell back to document.body
+  const sidebar = document.querySelector('nav, aside, [aria-label="Threads"], [aria-label="All messages"]');
+
   const allTextElements = [...mainChatArea.querySelectorAll('div[dir="ltr"], div[dir="rtl"], span, p')]
-    .filter(el => !el.closest("#host-genie-message-box")); // CRITICAL: Don't read our own panel
+    .filter(el => {
+      if (el.closest("#host-genie-message-box")) return false;
+      if (sidebar && sidebar.contains(el)) return false; // DONT READ SIDEBAR
+      return true;
+    });
 
   const validBlocks = allTextElements
     .map(el => ({

@@ -642,7 +642,8 @@ function extractMessageData() {
       "listing no longer exists", "show profile", "report this guest",
       "visit the help centre", "aircover for hosts", "payment", "payout",
       "translation on", "translation off", "show reservation",
-      "this could be your chance to host"
+      "this could be your chance to host", "special offer",
+      "show more topics", "reservation", "guest details"
     ];
     if (systemPhrases.some(p => lowerText.includes(p))) return true;
 
@@ -663,7 +664,11 @@ function extractMessageData() {
 
   // 5. Extract Text (Exclude Reservation Section explicitly)
   // Even if container is correct, Reservation might be a child. We MUST exclude it.
-  const reservationPanel = mainChatArea.querySelector('section[aria-label*="Reservation"], section[aria-label*="About"], aside');
+  // Find Reservation Panel by searching for HEADER text "Reservation"
+  const allHeaders = Array.from(mainChatArea.querySelectorAll('h2, h3, h4'));
+  const reservationHeader = allHeaders.find(h => h.innerText.includes("Reservation") || h.innerText.includes("About"));
+  // Step up to find the container of that header
+  const reservationPanel = reservationHeader?.closest('section') || reservationHeader?.closest('aside') || reservationHeader?.parentElement?.parentElement;
 
   const allTextElements = [...mainChatArea.querySelectorAll('div[dir="ltr"], div[dir="rtl"], span, p')]
     .filter(el => {

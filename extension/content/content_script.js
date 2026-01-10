@@ -705,6 +705,10 @@ function extractMessageData() {
       continue; // context found, keep it!
     }
 
+    // HARD TEXT FILTER FOR ACCESSIBILITY LEAKS
+    // Ensure "Read Conversation" and "Skip to" are killed regardless of container
+    if (txt.startsWith("Read Conversation with") || txt.startsWith("Skip to") || txt.startsWith("Switch to")) continue;
+
     if (headerElement && headerElement.contains(el)) continue;
 
     // STRICT RIGHT SIDEBAR EXCLUSION
@@ -763,7 +767,8 @@ function extractMessageData() {
   }
 
   // Build full chat log for backend (context)
-  const fullChat = deduplicated.join("\n---\n"); // This is helpful for context
+  // MUST RE-ASSEMBLE: History + Last Message
+  const fullChat = previousConversation ? (previousConversation + "\n---\n" + lastMessage) : lastMessage;
 
   const data = {
     guestName,

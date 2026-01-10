@@ -610,55 +610,43 @@ function extractMessageData() {
   const mainChatArea = getActiveChatContainer(inputBox);
   if (!mainChatArea) return;
 
-  // 3. Guest Name Detection (Robust)
-  // Look for h2/h1, but ignore "Messages" which is the page title often picked up.
+  // 3. Guest Name Detection (Fixed Duplication "Nabhas Nabhas")
   let guestName = "Guest";
-  const potentialHeaders = mainChatArea.querySelectorAll('h2, h1, div[data-testid="header-container"] h2, span[class*="title"]');
+  const potentialHeaders = mainChatArea.querySelectorAll('h2, h1, div[data-testid="header-container"] h2');
 
   for (let h of potentialHeaders) {
     const txt = h.innerText?.trim();
-    if (txt && txt !== "Messages" && txt !== "Inbox" && !forbiddenTerms.has(txt.toLowerCase())) {
-      guestName = txt;
+    if (txt && txt !== "Messages" && !forbiddenTerms.has(txt.toLowerCase())) {
+      // Clean up duplication: split by whitespace, take unique parts
+      const parts = txt.split(/\s+/);
+      const unique = [...new Set(parts)];
+      guestName = unique.join(" ");
       break;
     }
   }
 
-  // Cleanup name
-  const nameParts = guestName.split(/\n/)[0].trim().split(/\s+/);
-  if (nameParts.length > 1 && nameParts[0] === nameParts[1]) {
-    guestName = nameParts[0];
-  } else {
-    guestName = nameParts.length > 3 ? nameParts.slice(0, 2).join(" ") : guestName;
-  }
-
-  // 4. Define Noise Filtering (Dynamic + Static)
+  // 4. Define Noise Filtering (Strict Anti-Leak)
   const isNoise = (text) => {
     const lowerText = text.toLowerCase();
 
-    // 4.1 Check against Dynamic Forbidden List (The Anti-Leak Shield)
     if (forbiddenTerms.has(lowerText)) return true;
+    if (/^\d{1,2}:\d{2}\s?(AM|PM)?$/i.test(text)) return true; // Just time
 
-    // Partial Match for sidebar names (e.g. "Sangeeta" in "Message from Sangeeta")
-    // checking if the text *contains* a known sidebar name is risky (false positives), 
-    // but if the text IS just a sidebar name, we block it.
-
-    // 4.2 Timestamps
-    if (/^\d{1,2}:\d{2}\s?(AM|PM)?$/i.test(text)) return true;
-
-    // 4.3 Guest Name repetition
-    const lowerName = guestName.toLowerCase();
+    // Name checks
     if (text.trim() === guestName) return true;
-    if (text.includes(guestName + " " + guestName)) return true;
+    if (lowerText.includes(guestName.toLowerCase()) && lowerText.includes("booker")) return true; // "Nabhas - Booker"
 
-    // 4.4 System/Right Sidebar Noise
+    // Reservation / System Phrases to PURGE
     const systemPhrases = [
-      "report this guest", "visit the help centre", "aircover for hosts",
-      "joined airbnb in", "listing no longer exists", "show profile",
-      "payment", "payout", "resolution centre", "translation on", "translation off"
+      "enquiry sent", "no trips yet", "joined airbnb",
+      "listing no longer exists", "show profile", "report this guest",
+      "visit the help centre", "aircover for hosts", "payment", "payout",
+      "translation on", "translation off", "show reservation",
+      "this could be your chance to host"
     ];
     if (systemPhrases.some(p => lowerText.includes(p))) return true;
 
-    // 4.5 Exact matches & System Messages
+    // Exact matches
     const exactMatches = [
       "Today", "Yesterday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
       "Calendar", "Listings", "Messages", "All", "Unread", "Superhost Ambassador",
@@ -669,17 +657,22 @@ function extractMessageData() {
       "Enter", "Shift + Enter", "Guest", "Host"
     ];
     if (exactMatches.includes(text)) return true;
-    if (text.startsWith("Read Conversation with")) return true;
 
     return false;
   };
 
-  // 5. Extract Text
+  // 5. Extract Text (Exclude Reservation Section explicitly)
+  // Even if container is correct, Reservation might be a child. We MUST exclude it.
+  const reservationPanel = mainChatArea.querySelector('section[aria-label*="Reservation"], section[aria-label*="About"], aside');
+
   const allTextElements = [...mainChatArea.querySelectorAll('div[dir="ltr"], div[dir="rtl"], span, p')]
     .filter(el => {
+      // 1. Exclude Reservation/Profile Panel
+      if (reservationPanel && reservationPanel.contains(el)) return false;
+
+      // 2. Standard Exclusions
       if (el.closest("#host-genie-message-box")) return false;
       if (el.closest('form') || el.closest('textarea')) return false;
-      // Filter header elements
       if (el.tagName.match(/H[1-6]/)) return false;
 
       return true;
@@ -702,20 +695,19 @@ function extractMessageData() {
   // Deduplicate
   const deduplicated = [];
   validBlocks.forEach(b => {
-    const isDuplicate = deduplicated.some(prev =>
-      prev.text === b.text ||
-      (prev.text.includes(b.text) && b.text.length < 15) ||
-      (b.text.includes(prev.text) && prev.text.length < 15)
-    );
-
-    if (!isDuplicate) {
-      deduplicated.push(b);
-    }
+    const isDuplicate = deduplicated.some(prev => prev.text === b.text); // Strict dedupe
+    if (!isDuplicate) deduplicated.push(b);
   });
 
-  // Latest message
-  const sortedByLength = [...deduplicated].sort((a, b) => b.text.length - a.text.length);
-  const lastMessage = sortedByLength[0].text;
+  // Latest message: Use the PHYSICALLY LAST element, not the longest
+  const lastItem = deduplicated[deduplicated.length - 1];
+  let lastMessage = lastItem ? lastItem.text : "";
+
+  // Clean last message of any lingering timestamps or names if they are prefixes
+  // (Simple heuristic: if it starts with name, strip it)
+  if (lastMessage.startsWith(guestName)) {
+    lastMessage = lastMessage.replace(guestName, "").trim();
+  }
 
   // Build full chat log
   const fullChat = deduplicated.map(b => b.text).join("\n---\n");

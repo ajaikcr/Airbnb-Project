@@ -749,7 +749,8 @@ function extractMessageData() {
   }
 
   // Build full chat log
-  const fullChat = deduplicated.map(b => b.text).join("\n---\n");
+  // FIX: deduplicated is an array of STRINGS, not objects. No need to map .text!
+  const fullChat = deduplicated.join("\n---\n");
 
   const data = {
     guestName,

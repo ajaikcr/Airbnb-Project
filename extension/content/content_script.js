@@ -569,69 +569,39 @@ function observeMessageChanges() {
 function extractMessageData() {
   if (window.hostGenieContext.pageType !== "messages") return;
 
-  // 1. Find the Anchor (Input or Header)
-  const findAnchor = () => {
-    // A. Direct input with aria-labels or placeholders
-    const ariaMatch = document.querySelector('[aria-label*="Write a message"], [aria-placeholder*="Write a message"]');
-    if (ariaMatch) return ariaMatch;
+  // Find the last message content
+  // Airbnb messages are usually in divs. We look for the main chat container or just the last few text blocks.
 
-    // B. Broad search for any textbox or textarea with placeholder
-    const allTextInputs = [...document.querySelectorAll('textarea, [role="textbox"], input')];
-    const textInput = allTextInputs.find(el => {
-      const p = el.getAttribute('placeholder') || el.getAttribute('aria-placeholder') || '';
-      return p.toLowerCase().includes("write a message");
-    });
-    if (textInput) return textInput;
+  // 1. ANCHOR STRATEGY: Find the "Type a message" box to locate the active chat container
+  // This guarantees we are in the main chat and not the sidebar.
+  const inputBox = document.querySelector('textarea[placeholder*="message"], div[contenteditable="true"], textarea[aria-label*="message"]');
 
-    // C. Broad text search for "Write a message" (sometimes in a div/span)
-    const allDivs = [...document.querySelectorAll('div, span, button')];
-    const textMatch = allDivs.find(el => el.innerText?.toLowerCase().includes("write a message"));
-    if (textMatch) return textMatch;
+  // If no input box is found, we might not be in an active chat or it's loading.
+  // We can try to fall back to the main role, but the input box is the most reliable anchor.
+  const mainChatArea = inputBox?.closest('main') ||
+    inputBox?.closest('div[role="main"]') ||
+    document.querySelector('div[aria-label="Messages"] > div:not([style*="display: none"]) > div:not(:first-child)') ||
+    document.querySelector('main');
 
-    return null;
-  };
+  if (!mainChatArea) return;
 
-  const anchor = findAnchor();
-  let mainChatArea = anchor?.closest('section, main, [role="main"], div[aria-label="Messages"]');
-
-  // 2. Header Fallback (If input anchor fails)
-  if (!mainChatArea) {
-    console.log("[HostGenie] Input anchor failed. Trying header fallback...");
-    // Find h2 that is NOT in the sidebar
-    const allH2s = [...document.querySelectorAll('h2')];
-    const activeH2 = allH2s.find(h2 => {
-      const sidebar = h2.closest('nav, aside, [aria-label="Threads"], [aria-label="All messages"]');
-      return !sidebar;
-    });
-    mainChatArea = activeH2?.closest('section, main, [role="main"], div[aria-label="Messages"]');
-  }
-
-  if (!mainChatArea) {
-    console.log("%c[HostGenie] ERROR: Could not find active chat pane using any method.", "color: orange; font-weight: bold;");
-    return;
-  }
-  console.log("%c[HostGenie] Active chat pane isolated successfully.", "color: green; font-weight: bold;");
-
-  // 3. Detect Guest Name ONLY from this isolated area
-  const nameHeader = mainChatArea.querySelector('h2, [role="heading"]');
+  // 1.1 Scoped Guest Name Detection
+  // Only look for the name header WITHIN this confirmed chat area.
+  const nameHeader = mainChatArea.querySelector('h2, h1, div[data-testid*="header"] h2');
   let guestName = nameHeader?.innerText?.trim() || "Guest";
 
-  // Cleanup name (e.g. "Nabhas Nabhas" -> "Nabhas")
-  const nameParts = guestName.split(/\s+/);
-  if (nameParts.length === 2 && nameParts[0] === nameParts[1]) {
-    guestName = nameParts[0];
+  // Cleanup name (remove status like "checking out")
+  const nameParts = guestName.split(/\n/)[0].trim().split(/\s+/);
+  if (nameParts.length > 1 && nameParts[0] === nameParts[1]) {
+    guestName = nameParts[0]; // Fix "Nabhas Nabhas"
   } else {
-    guestName = [...new Set(nameParts)].join(" ");
+    guestName = nameParts.length > 3 ? nameParts.slice(0, 2).join(" ") : guestName;
   }
 
-  if (guestName === "Guest" || !guestName) {
-    console.log("[HostGenie] Skipping extraction: Valid guest name not detected in active pane.");
-    return;
-  }
-
-  // 4. Identify the header area to EXCLUDE it
-  const headerArea = nameHeader?.closest('div[style*="border-bottom"], div[role="heading"]') ||
-    mainChatArea.querySelector('div:first-child');
+  // 1.2 Identify Header to Exclude
+  const headerArea = nameHeader?.closest('header') ||
+    nameHeader?.closest('div[style*="border-bottom"]') ||
+    mainChatArea.querySelector('div[data-testid="conversation-header"]');
 
   // 2. Define Noise Filtering (Strict)
   const isNoise = (text) => {
@@ -641,8 +611,13 @@ function extractMessageData() {
     // 2.2 Guest Name exact match or repetition including with "Booker"
     const lowerText = text.toLowerCase();
     const lowerName = guestName.toLowerCase();
-    if (text.trim() === guestName || text.includes(guestName + " " + guestName)) return true;
-    if (lowerText.includes(lowerName) && (lowerText.includes("booker") || lowerText.includes("guest"))) return true;
+
+    // Exact name match
+    if (text.trim() === guestName) return true;
+    // "Name Name" repetition
+    if (text.includes(guestName + " " + guestName)) return true;
+    // "Name Booker" or "Guest Name"
+    if (lowerText.includes(lowerName) && (lowerText.includes("booker") || lowerText.includes("guest") || lowerText.includes("translation"))) return true;
 
     // 2.3 Exact matches for dates and UI buttons
     const exactMatches = [
@@ -652,40 +627,37 @@ function extractMessageData() {
       "Show details", "Edit", "Learn More", "Select Certificate",
       "Smartcard / Token User Pin", "Return to Inbox", "Write a message...", "Send",
       "Skip to Last Message (Ctrl-e)", "Skip to Typing Your Message (Ctrl-m)",
-      "Translation on", "Translation off"
+      "Translation on", "Translation off", "Enter", "Shift + Enter"
     ];
     if (exactMatches.includes(text)) return true;
 
-    // 2.4 Prefixes for system/sidebar labels
-    const prefixes = [
-      "Current Domain", "Signer.Digital", "Resource Centre",
-      "What happens after", "Switch to hosting", "Switch to travelling",
-      "Last message sent", "You're now matched with",
-      "Read Conversation with", // Sidebar contact labels
-      "Enquiry sent",
-      "Reservation from",
-      "Enquiry for"
-    ];
-    if (prefixes.some(p => text.startsWith(p))) return true;
+    // 2.4 Prefixes using startsWith is risky for short text, better to use regex or checks
+    if (text.startsWith("Read Conversation with")) return true;
+    if (text.startsWith("Last message sent")) return true;
+    if (text.startsWith("You're now matched with")) return true;
 
     return false;
   };
 
-  // 3. Extract and EXCLUDE sidebar AND header explicitly
+  // 3. Extract Text from Scoped Area
+  // Targeted search: message bubbles often have specific classes or structures.
+  // We'll look for all text containers but explicitly strictly exclude the others.
+
   const sidebar = document.querySelector('nav, aside, [aria-label="Threads"], [aria-label="All messages"]');
 
-  // Targeted search: focusing on elements that ARE likely message bubbles
-  // Airbnb bubbles usually have dir="ltr" or specific test-ids
   const allTextElements = [...mainChatArea.querySelectorAll('div[dir="ltr"], div[dir="rtl"], span, p')]
     .filter(el => {
       if (el.closest("#host-genie-message-box")) return false;
-      if (sidebar && sidebar.contains(el)) return false; // DONT READ SIDEBAR
-      if (headerArea && headerArea.contains(el)) return false; // DONT READ HEADER
+      // Double safety: if we somehow selected sidebar
+      if (sidebar && sidebar.contains(el)) return false;
+      // Exclude Header
+      if (headerArea && headerArea.contains(el)) return false;
 
-      // Heuristic: filter out small spans that are likely labels if they are nested in headers 
-      // even if they weren't caught by headerArea
-      const parentHeader = el.closest('h1, h2, h3, [role="heading"]');
-      if (parentHeader) return false;
+      // Filter out small labels inside headers if headerArea failed
+      if (el.closest('h1, h2, h3, header')) return false;
+
+      // Filter out utility text near input box
+      if (el.closest('form') || el.closest('textarea')) return false;
 
       return true;
     });
@@ -693,7 +665,6 @@ function extractMessageData() {
   const validBlocks = allTextElements
     .map(el => ({
       text: el.innerText?.trim(),
-      // Check if it's aligned right (Host usually) or left (Guest usually)
       isRight: window.getComputedStyle(el).textAlign === 'right' || el.closest('[style*="flex-end"]') !== null
     }))
     .filter(b =>

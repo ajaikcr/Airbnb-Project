@@ -638,7 +638,7 @@ function extractMessageData() {
 
     // Reservation / System Phrases to PURGE
     const systemPhrases = [
-      "enquiry sent", "no trips yet", "joined airbnb",
+      "no trips yet", "joined airbnb",
       "listing no longer exists", "show profile", "report this guest",
       "visit the help centre", "aircover for hosts", "payment", "payout",
       "translation on", "translation off", "show reservation",
@@ -671,90 +671,95 @@ function extractMessageData() {
   // Step up to find the container of that header
   const reservationPanel = reservationHeader?.closest('section') || reservationHeader?.closest('aside') || reservationHeader?.parentElement?.parentElement;
 
-  if (unique.join(" ") === guestName) { // Assuming guestName is already set
-    headerElement = h;
-    break;
+  // 5. Extract Text
+  // Identify Header to exclude
+  const headerElement = mainChatArea.querySelector('header') ||
+    mainChatArea.querySelector('div[data-testid="header-container"]') ||
+    mainChatArea.querySelector('div[style*="border-bottom"]');
+
+  // Select ALL elements to ensure we don't miss text nodes wrapped in weird spans
+  const allTextElements = mainChatArea.querySelectorAll('*');
+
+  const textBlocks = [];
+
+  // REVERT TO TREEWALKER WITH VISIBILITY CHECKS
+  const walker = document.createTreeWalker(mainChatArea, NodeFilter.SHOW_TEXT, null, false);
+  while (walker.nextNode()) {
+    const node = walker.currentNode;
+    const el = node.parentElement;
+
+    if (!el || el.closest("#host-genie-message-box")) continue;
+    if (headerElement && headerElement.contains(el)) continue;
+    if (reservationPanel && reservationPanel.contains(el)) continue;
+
+    const style = window.getComputedStyle(el);
+    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
+    if (el.closest('[aria-hidden="true"]')) continue;
+
+    const txt = node.textContent.trim();
+    if (txt.length > 1 && !isNoise(txt) && !txt.startsWith("http")) {
+      textBlocks.push(txt);
+    }
   }
-}
+
+  if (!textBlocks.length) return;
+
+  // Deduplicate
+  const deduplicated = [...new Set(textBlocks)];
+
+  // Latest message & History Split
+  let lastMessage = deduplicated.pop() || "";
+
+  // FIX: If deduplicated has only 1 item and it's looking like a name, it's probably the header that snuck in.
+  // Validate lastMessage is not just the name
+  if (lastMessage.replace(/\s/g, '').toLowerCase() === guestName.replace(/\s/g, '').toLowerCase()) {
+    lastMessage = deduplicated.pop() || ""; // Discard header, try next
   }
 
-for (const el of allTextElements) {
-  // Safety checks
-  if (!el || el.closest("#host-genie-message-box")) continue;
-  // REMOVED 'form' exclusion - likely hiding chat bubbles
-  if (el.closest('textarea') || el.closest('button') || el.closest('input')) continue;
+  const previousConversation = deduplicated.join("\n---\n");
 
-  // Explicit Exclusions
-  if (headerElement && headerElement.contains(el)) continue;
-  if (reservationPanel && reservationPanel.contains(el)) continue;
-
-  // Ignore Headers/Titles generally (H1-H6)
-  if (['H1', 'H2', 'H3', 'H4', 'H5', 'H6'].includes(el.tagName)) continue;
-
-  const text = el.textContent.trim(); // Use textContent for more accurate text extraction
-  if (text.length > 1 && !isNoise(text) && !text.startsWith("http")) { // Allow short "Hi"
-    textBlocks.push(text);
+  // Cleaning Last Message
+  if (lastMessage.startsWith(guestName)) {
+    lastMessage = lastMessage.replace(guestName, "").trim();
   }
-}
+  // Clean last message of any lingering timestamps or names if they are prefixes
+  // (Simple heuristic: if it starts with name, strip it)
+  if (lastMessage.startsWith(guestName)) {
+    lastMessage = lastMessage.replace(guestName, "").trim();
+  }
 
-if (!textBlocks.length) return;
+  // Build full chat log
+  const fullChat = deduplicated.map(b => b.text).join("\n---\n");
 
-// Deduplicate
-const deduplicated = [...new Set(textBlocks)];
+  const data = {
+    guestName,
+    lastMessage,
+    fullChat,
+    extractedAt: new Date().toISOString()
+  };
 
-// Latest message & History Split
-let lastMessage = deduplicated.pop() || "";
+  const signature = JSON.stringify({ guestName, lastMessage, fullChatLength: (fullChat || "").length });
 
-// FIX: If deduplicated has only 1 item and it's looking like a name, it's probably the header that snuck in.
-// Validate lastMessage is not just the name
-if (lastMessage.replace(/\s/g, '').toLowerCase() === guestName.replace(/\s/g, '').toLowerCase()) {
-  lastMessage = deduplicated.pop() || ""; // Discard header, try next
-}
+  if (signature === lastMessageSignature) return;
+  lastMessageSignature = signature;
 
-const previousConversation = deduplicated.join("\n---\n");
+  window.hostGenieContext.message = data;
 
-// Cleaning Last Message
-if (lastMessage.startsWith(guestName)) {
-  lastMessage = lastMessage.replace(guestName, "").trim();
-}
-// Clean last message of any lingering timestamps or names if they are prefixes
-// (Simple heuristic: if it starts with name, strip it)
-if (lastMessage.startsWith(guestName)) {
-  lastMessage = lastMessage.replace(guestName, "").trim();
-}
+  cleanupMessageUI();
+  injectMessagePanel(data);
 
-// Build full chat log
-const fullChat = deduplicated.map(b => b.text).join("\n---\n");
+  // ULTRA CLEAN CONSOLE LOG FOR USER
+  console.log(`%c[HostGenie] Chat History for: ${guestName}`, "color: #ff385c; font-weight: bold; font-size: 14px;");
+  console.log(fullChat);
 
-const data = {
-  guestName,
-  lastMessage,
-  fullChat,
-  extractedAt: new Date().toISOString()
-};
+  // BRIDGE TRIGGER
+  chrome.runtime.sendMessage({
+    type: "EVENT_NEW_MESSAGE",
+    payload: getConsolidatedDataText()
+  });
 
-const signature = JSON.stringify({ guestName, lastMessage, fullChatLength: (fullChat || "").length });
-
-if (signature === lastMessageSignature) return;
-lastMessageSignature = signature;
-
-window.hostGenieContext.message = data;
-
-cleanupMessageUI();
-injectMessagePanel(data);
-
-// ULTRA CLEAN CONSOLE LOG FOR USER
-console.log(`%c[HostGenie] Chat History for: ${guestName}`, "color: #ff385c; font-weight: bold; font-size: 14px;");
-console.log(fullChat);
-
-// BRIDGE TRIGGER
-chrome.runtime.sendMessage({
-  type: "EVENT_NEW_MESSAGE",
-  payload: getConsolidatedDataText()
-});
-
-console.log("[HostGenie] Message data relayed to bridge");
-logConsolidatedState();
+  console.log("[HostGenie] Message data relayed to bridge");
+  logConsolidatedState();
 }
 
 // ----------------------------------------

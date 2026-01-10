@@ -572,18 +572,6 @@ function extractMessageData() {
   // Find the last message content
   // Airbnb messages are usually in divs. We look for the main chat container or just the last few text blocks.
 
-  // 1. DYNAMIC EXCLUSION STRATEGY
-  // First, identify all "Forbidden Zones" (Sidebars) and build a blocklist of text.
-  // This ensures that even if our container logic is slightly off, we won't extract sidebar text.
-  const forbiddenTerms = new Set();
-  const sidebars = document.querySelectorAll('nav, aside, [role="navigation"], [class*="sidebar"], [aria-label="Threads"], section[aria-label*="About"]');
-
-  sidebars.forEach(sidebar => {
-    // Add all distinct lines of text from sidebars to forbidden list
-    const lines = sidebar.innerText.split("\n").map(l => l.trim()).filter(l => l.length > 2);
-    lines.forEach(l => forbiddenTerms.add(l.toLowerCase()));
-  });
-
   // 2. ANCHOR STRATEGY: Find the "Type a message" box.
   const inputBox = document.querySelector('textarea[placeholder*="message"], div[contenteditable="true"], textarea[aria-label*="message"]');
 
@@ -751,6 +739,7 @@ function extractMessageData() {
     guestName,
     lastMessage,
     fullChat,
+    previousChat: fullChat, // Fix for UI: passing the separated history
     extractedAt: new Date().toISOString()
   };
 

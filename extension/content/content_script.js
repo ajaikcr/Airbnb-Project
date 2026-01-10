@@ -788,14 +788,12 @@ function injectMessagePanel(data) {
         <p style="margin: 4px 0; font-weight: 500; line-height: 1.4;">${latest}</p>
       </div>
 
-      ${previous.length > 0 ? `
-        <div style="margin-top: 12px; border-top: 1px solid #eee; padding-top: 10px;">
-          <strong style="font-size: 11px; color: #717171; text-transform: uppercase;">Previous Conversation</strong>
-          <div style="max-height: 200px; overflow-y: auto; margin-top: 6px; padding-right: 4px; font-size: 13px; color: #484848;">
-            ${previous.map(msg => `<div style="margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid #f7f7f7; line-height: 1.4;">${msg}</div>`).join("")}
-          </div>
-        </div>
-      ` : ""}
+      <div style="margin-bottom: 2px;">
+      <label style="font-size: 10px; color: #717171; display: block; margin-bottom: 1px;">PREVIOUS CHATS</label>
+      <div style="font-size: 11px; color: #222; max-height: 80px; overflow-y: auto; background: #f7f7f7; padding: 6px; border-radius: 6px; border: 1px solid #ddd;">
+        ${data.previousChat ? data.previousChat.replace(/\n/g, '<br>') : 'No previous history.'}
+      </div>
+    </div>
 
       <button id="host-genie-reply-btn" style="
         margin-top: 14px; padding: 10px; width: 100%; 

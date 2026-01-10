@@ -643,7 +643,8 @@ function extractMessageData() {
       "visit the help centre", "aircover for hosts", "payment", "payout",
       "translation on", "translation off", "show reservation",
       "this could be your chance to host", "special offer",
-      "show more topics", "reservation", "guest details"
+      "show more topics", "reservation", "guest details",
+      "resource centre", "airbnb", "what happens after you tap next"
     ];
     if (systemPhrases.some(p => lowerText.includes(p))) return true;
 
@@ -670,82 +671,90 @@ function extractMessageData() {
   // Step up to find the container of that header
   const reservationPanel = reservationHeader?.closest('section') || reservationHeader?.closest('aside') || reservationHeader?.parentElement?.parentElement;
 
-  const allTextElements = [...mainChatArea.querySelectorAll('div[dir="ltr"], div[dir="rtl"], span, p')]
-    .filter(el => {
-      // 1. Exclude Reservation/Profile Panel
-      if (reservationPanel && reservationPanel.contains(el)) return false;
-
-      // 2. Standard Exclusions
-      if (el.closest("#host-genie-message-box")) return false;
-      if (el.closest('form') || el.closest('textarea')) return false;
-      if (el.tagName.match(/H[1-6]/)) return false;
-
-      return true;
-    });
-
-  const validBlocks = allTextElements
-    .map(el => ({
-      text: el.innerText?.trim(),
-      isRight: window.getComputedStyle(el).textAlign === 'right' || el.closest('[style*="flex-end"]') !== null
-    }))
-    .filter(b =>
-      b.text &&
-      b.text.length > 2 &&
-      !isNoise(b.text) &&
-      !b.text.startsWith("http")
-    );
-
-  if (!validBlocks.length) return;
-
-  // Deduplicate
-  const deduplicated = [];
-  validBlocks.forEach(b => {
-    const isDuplicate = deduplicated.some(prev => prev.text === b.text); // Strict dedupe
-    if (!isDuplicate) deduplicated.push(b);
-  });
-
-  // Latest message: Use the PHYSICALLY LAST element, not the longest
-  const lastItem = deduplicated[deduplicated.length - 1];
-  let lastMessage = lastItem ? lastItem.text : "";
-
-  // Clean last message of any lingering timestamps or names if they are prefixes
-  // (Simple heuristic: if it starts with name, strip it)
-  if (lastMessage.startsWith(guestName)) {
-    lastMessage = lastMessage.replace(guestName, "").trim();
+  if (unique.join(" ") === guestName) { // Assuming guestName is already set
+    headerElement = h;
+    break;
+  }
+}
   }
 
-  // Build full chat log
-  const fullChat = deduplicated.map(b => b.text).join("\n---\n");
+for (const el of allTextElements) {
+  // Safety checks
+  if (!el || el.closest("#host-genie-message-box")) continue;
+  // REMOVED 'form' exclusion - likely hiding chat bubbles
+  if (el.closest('textarea') || el.closest('button') || el.closest('input')) continue;
 
-  const data = {
-    guestName,
-    lastMessage,
-    fullChat,
-    extractedAt: new Date().toISOString()
-  };
+  // Explicit Exclusions
+  if (headerElement && headerElement.contains(el)) continue;
+  if (reservationPanel && reservationPanel.contains(el)) continue;
 
-  const signature = JSON.stringify({ guestName, lastMessage, fullChatLength: (fullChat || "").length });
+  // Ignore Headers/Titles generally (H1-H6)
+  if (['H1', 'H2', 'H3', 'H4', 'H5', 'H6'].includes(el.tagName)) continue;
 
-  if (signature === lastMessageSignature) return;
-  lastMessageSignature = signature;
+  const text = el.textContent.trim(); // Use textContent for more accurate text extraction
+  if (text.length > 1 && !isNoise(text) && !text.startsWith("http")) { // Allow short "Hi"
+    textBlocks.push(text);
+  }
+}
 
-  window.hostGenieContext.message = data;
+if (!textBlocks.length) return;
 
-  cleanupMessageUI();
-  injectMessagePanel(data);
+// Deduplicate
+const deduplicated = [...new Set(textBlocks)];
 
-  // ULTRA CLEAN CONSOLE LOG FOR USER
-  console.log(`%c[HostGenie] Chat History for: ${guestName}`, "color: #ff385c; font-weight: bold; font-size: 14px;");
-  console.log(fullChat);
+// Latest message & History Split
+let lastMessage = deduplicated.pop() || "";
 
-  // BRIDGE TRIGGER
-  chrome.runtime.sendMessage({
-    type: "EVENT_NEW_MESSAGE",
-    payload: getConsolidatedDataText()
-  });
+// FIX: If deduplicated has only 1 item and it's looking like a name, it's probably the header that snuck in.
+// Validate lastMessage is not just the name
+if (lastMessage.replace(/\s/g, '').toLowerCase() === guestName.replace(/\s/g, '').toLowerCase()) {
+  lastMessage = deduplicated.pop() || ""; // Discard header, try next
+}
 
-  console.log("[HostGenie] Message data relayed to bridge");
-  logConsolidatedState();
+const previousConversation = deduplicated.join("\n---\n");
+
+// Cleaning Last Message
+if (lastMessage.startsWith(guestName)) {
+  lastMessage = lastMessage.replace(guestName, "").trim();
+}
+// Clean last message of any lingering timestamps or names if they are prefixes
+// (Simple heuristic: if it starts with name, strip it)
+if (lastMessage.startsWith(guestName)) {
+  lastMessage = lastMessage.replace(guestName, "").trim();
+}
+
+// Build full chat log
+const fullChat = deduplicated.map(b => b.text).join("\n---\n");
+
+const data = {
+  guestName,
+  lastMessage,
+  fullChat,
+  extractedAt: new Date().toISOString()
+};
+
+const signature = JSON.stringify({ guestName, lastMessage, fullChatLength: (fullChat || "").length });
+
+if (signature === lastMessageSignature) return;
+lastMessageSignature = signature;
+
+window.hostGenieContext.message = data;
+
+cleanupMessageUI();
+injectMessagePanel(data);
+
+// ULTRA CLEAN CONSOLE LOG FOR USER
+console.log(`%c[HostGenie] Chat History for: ${guestName}`, "color: #ff385c; font-weight: bold; font-size: 14px;");
+console.log(fullChat);
+
+// BRIDGE TRIGGER
+chrome.runtime.sendMessage({
+  type: "EVENT_NEW_MESSAGE",
+  payload: getConsolidatedDataText()
+});
+
+console.log("[HostGenie] Message data relayed to bridge");
+logConsolidatedState();
 }
 
 // ----------------------------------------

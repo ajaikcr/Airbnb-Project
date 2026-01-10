@@ -706,8 +706,19 @@ function extractMessageData() {
     }
 
     if (headerElement && headerElement.contains(el)) continue;
+
+    // STRICT RIGHT SIDEBAR EXCLUSION
     if (strictSidebar && strictSidebar.contains(el)) {
-      console.log("Dropped (Sidebar):", txt);
+      console.log("Dropped (Right Sidebar):", txt);
+      continue;
+    }
+
+    // STRICT LEFT SIDEBAR / THREAD LIST EXCLUSION (Fixes "Read Conversation with..." leak)
+    if (el.closest('nav') ||
+      el.closest('[aria-label="Threads"]') ||
+      el.closest('[data-testid="conversation-list-item"]') ||
+      el.closest('a[href*="/messaging/conversation/"]')) {
+      console.log("Dropped (Left Sidebar):", txt);
       continue;
     }
 

@@ -670,8 +670,16 @@ function extractMessageData() {
     mainChatArea.querySelector('div[data-testid="header-container"]') ||
     mainChatArea.querySelector('div[style*="border-bottom"]');
 
-  // Select ALL elements to ensure we don't miss text nodes wrapped in weird spans
+  // Select ALL elements 
   const allTextElements = mainChatArea.querySelectorAll('*');
+
+  // Identify Right Sidebar (Reservation / Profile) - STRICTLY
+  const allHeaders = Array.from(mainChatArea.querySelectorAll('h2, h3, h4'));
+  const sidebarHeader = allHeaders.find(h =>
+    (h.innerText.includes("Reservation") || h.innerText.includes("About")) &&
+    !h.closest('div[data-testid="message-pane"]')
+  );
+  const strictSidebar = sidebarHeader?.closest('section') || sidebarHeader?.closest('aside');
 
   const textBlocks = [];
 
@@ -682,9 +690,19 @@ function extractMessageData() {
     const el = node.parentElement;
 
     if (!el || el.closest("#host-genie-message-box")) continue;
+
+    const txt = node.textContent.trim();
+    const lowerTxt = txt.toLowerCase();
+
+    // FORCE ACCEPT "Enquiry sent" (Context override)
+    if (lowerTxt.includes("enquiry sent") || lowerTxt.includes("guest, ")) {
+      textBlocks.push(txt);
+      continue; // context found, keep it!
+    }
+
     if (headerElement && headerElement.contains(el)) continue;
     if (strictSidebar && strictSidebar.contains(el)) {
-      // console.log("Dropped (Sidebar):", node.textContent);
+      console.log("Dropped (Sidebar):", txt);
       continue;
     }
 
@@ -692,11 +710,11 @@ function extractMessageData() {
     if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
     if (el.closest('[aria-hidden="true"]')) continue;
 
-    const txt = node.textContent.trim();
     if (txt.length > 1 && !isNoise(txt) && !txt.startsWith("http")) {
       textBlocks.push(txt);
-    } else if (txt.length > 1) {
-      // console.log(`Dropped (Noise/Short): "${txt}"`);
+    } else if (txt.length > 0) {
+      // console.log(`Dropped (Noise/Short): "${txt}"`); // Original comment, now using the provided one
+      console.log(`Dropped (Noise/Short): "${txt}"`);
     }
   }
 

@@ -649,7 +649,8 @@ function extractMessageData() {
       "this could be your chance to host", "special offer",
       "show more topics", "reservation", "guest details",
       "resource centre", "airbnb", "what happens after you tap next",
-      "check out", "learn more", "show details"
+      "check out", "learn more", "show details",
+      "read conversation", "switch to travelling", "skip to content", "skip to"
     ];
     if (systemPhrases.some(p => lowerText.includes(p))) return true;
 
@@ -744,19 +745,20 @@ function extractMessageData() {
   }
   // Clean last message of any lingering timestamps or names if they are prefixes
   // (Simple heuristic: if it starts with name, strip it)
+  // Clean last message of any lingering timestamps or names if they are prefixes
+  // (Simple heuristic: if it starts with name, strip it)
   if (lastMessage.startsWith(guestName)) {
     lastMessage = lastMessage.replace(guestName, "").trim();
   }
 
-  // Build full chat log
-  // FIX: deduplicated is an array of STRINGS, not objects. No need to map .text!
-  const fullChat = deduplicated.join("\n---\n");
+  // Build full chat log for backend (context)
+  const fullChat = deduplicated.join("\n---\n"); // This is helpful for context
 
   const data = {
     guestName,
     lastMessage,
     fullChat,
-    previousChat: fullChat, // Fix for UI: passing the separated history
+    previousChat: previousConversation, // FIX: Use the SPLIT history (minus last message) for UI
     extractedAt: new Date().toISOString()
   };
 

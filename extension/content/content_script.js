@@ -644,7 +644,8 @@ function extractMessageData() {
       "translation on", "translation off", "show reservation",
       "this could be your chance to host", "special offer",
       "show more topics", "reservation", "guest details",
-      "resource centre", "airbnb", "what happens after you tap next"
+      "resource centre", "airbnb", "what happens after you tap next",
+      "check out", "learn more", "show details"
     ];
     if (systemPhrases.some(p => lowerText.includes(p))) return true;
 
@@ -662,14 +663,6 @@ function extractMessageData() {
 
     return false;
   };
-
-  // 5. Extract Text (Exclude Reservation Section explicitly)
-  // Even if container is correct, Reservation might be a child. We MUST exclude it.
-  // Find Reservation Panel by searching for HEADER text "Reservation"
-  const allHeaders = Array.from(mainChatArea.querySelectorAll('h2, h3, h4'));
-  const reservationHeader = allHeaders.find(h => h.innerText.includes("Reservation") || h.innerText.includes("About"));
-  // Step up to find the container of that header
-  const reservationPanel = reservationHeader?.closest('section') || reservationHeader?.closest('aside') || reservationHeader?.parentElement?.parentElement;
 
   // 5. Extract Text
   // Identify Header to exclude
@@ -690,7 +683,10 @@ function extractMessageData() {
 
     if (!el || el.closest("#host-genie-message-box")) continue;
     if (headerElement && headerElement.contains(el)) continue;
-    if (reservationPanel && reservationPanel.contains(el)) continue;
+    if (strictSidebar && strictSidebar.contains(el)) {
+      // console.log("Dropped (Sidebar):", node.textContent);
+      continue;
+    }
 
     const style = window.getComputedStyle(el);
     if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') continue;
@@ -699,6 +695,8 @@ function extractMessageData() {
     const txt = node.textContent.trim();
     if (txt.length > 1 && !isNoise(txt) && !txt.startsWith("http")) {
       textBlocks.push(txt);
+    } else if (txt.length > 1) {
+      // console.log(`Dropped (Noise/Short): "${txt}"`);
     }
   }
 

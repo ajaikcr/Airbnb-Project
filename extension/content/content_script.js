@@ -572,40 +572,56 @@ function extractMessageData() {
   // Find the last message content
   // Airbnb messages are usually in divs. We look for the main chat container or just the last few text blocks.
 
-  // 1. ANCHOR STRATEGY: Find the "Type a message" box.
+  // 1. DYNAMIC EXCLUSION STRATEGY
+  // First, identify all "Forbidden Zones" (Sidebars) and build a blocklist of text.
+  // This ensures that even if our container logic is slightly off, we won't extract sidebar text.
+  const forbiddenTerms = new Set();
+  const sidebars = document.querySelectorAll('nav, aside, [role="navigation"], [class*="sidebar"], [aria-label="Threads"], section[aria-label*="About"]');
+
+  sidebars.forEach(sidebar => {
+    // Add all distinct lines of text from sidebars to forbidden list
+    const lines = sidebar.innerText.split("\n").map(l => l.trim()).filter(l => l.length > 2);
+    lines.forEach(l => forbiddenTerms.add(l.toLowerCase()));
+  });
+
+  // 2. ANCHOR STRATEGY: Find the "Type a message" box.
   const inputBox = document.querySelector('textarea[placeholder*="message"], div[contenteditable="true"], textarea[aria-label*="message"]');
 
-  // Helper to find the "Active Chat Container" (Middle Column)
-  // Strategy: Climb up. If the PARENT has a sidebar, then WE are the chat column. STOP.
+  // Helper to find the "Active Chat Container" with Broader Detection
   const getActiveChatContainer = (startNode) => {
     let current = startNode;
-    // Climb up until we handle the parent checks
     while (current && current.parentElement && current.parentElement !== document.body) {
       const parent = current.parentElement;
-      // Check if parent contains the MAIN navigation/sidebar elements
-      const hasSidebar = parent.querySelector('[aria-label="Threads"], nav[aria-label="Messages"], section[aria-label*="Listings"]');
+      // Broader check for ANY sidebar-like element in the parent
+      const hasSidebar = parent.querySelector('nav, aside, [role="navigation"], [class*="sidebar"], [aria-label="Threads"], section[aria-label*="About"]');
 
       if (hasSidebar) {
-        // The parent contains a sidebar. 
-        // If 'current' (our prospective column) does NOT have that sidebar, then 'current' is the isolated Chat Column.
-        const selfHasSidebar = current.querySelector('[aria-label="Threads"], nav[aria-label="Messages"]');
-        if (!selfHasSidebar) {
-          return current;
+        // Verify we are not IN the sidebar ourselves
+        const amISidebar = current.matches('nav, aside, [role="navigation"]') || current.querySelector('[aria-label="Threads"]');
+        if (!amISidebar) {
+          return current; // We are the sibling of the sidebar!
         }
       }
       current = parent;
     }
-    // Fallback: just return main or body if logical isolation failed
-    return startNode?.closest('main') || document.body;
+    return inputBox?.closest('main') || document.body;
   };
 
   const mainChatArea = getActiveChatContainer(inputBox);
   if (!mainChatArea) return;
 
-  // 1.1 Scoped Guest Name Detection
-  // Only look for the name header WITHIN this isolated column.
-  const nameHeader = mainChatArea.querySelector('h2, h1, div[data-testid*="header"] h2');
-  let guestName = nameHeader?.innerText?.trim() || "Guest";
+  // 3. Guest Name Detection (Robust)
+  // Look for h2/h1, but ignore "Messages" which is the page title often picked up.
+  let guestName = "Guest";
+  const potentialHeaders = mainChatArea.querySelectorAll('h2, h1, div[data-testid="header-container"] h2, span[class*="title"]');
+
+  for (let h of potentialHeaders) {
+    const txt = h.innerText?.trim();
+    if (txt && txt !== "Messages" && txt !== "Inbox" && !forbiddenTerms.has(txt.toLowerCase())) {
+      guestName = txt;
+      break;
+    }
+  }
 
   // Cleanup name
   const nameParts = guestName.split(/\n/)[0].trim().split(/\s+/);
@@ -615,31 +631,26 @@ function extractMessageData() {
     guestName = nameParts.length > 3 ? nameParts.slice(0, 2).join(" ") : guestName;
   }
 
-  // Filter out if "Guest Name" is actually "Messages" (Page Title)
-  if (guestName === "Messages") {
-    // Try to find a better header inside the container, ignoring the top-level H1
-    const subHeader = mainChatArea.querySelector('div[data-testid="header-container"] h2');
-    if (subHeader) guestName = subHeader.innerText.trim();
-  }
-
-  // 1.2 Identify Header to Exclude
-  const headerArea = nameHeader?.closest('header') ||
-    nameHeader?.closest('div[style*="border-bottom"]') ||
-    mainChatArea.querySelector('div[data-testid="conversation-header"]');
-
-  // 2. Define Noise Filtering (Strict)
+  // 4. Define Noise Filtering (Dynamic + Static)
   const isNoise = (text) => {
-    // 2.1 Timestamps
+    const lowerText = text.toLowerCase();
+
+    // 4.1 Check against Dynamic Forbidden List (The Anti-Leak Shield)
+    if (forbiddenTerms.has(lowerText)) return true;
+
+    // Partial Match for sidebar names (e.g. "Sangeeta" in "Message from Sangeeta")
+    // checking if the text *contains* a known sidebar name is risky (false positives), 
+    // but if the text IS just a sidebar name, we block it.
+
+    // 4.2 Timestamps
     if (/^\d{1,2}:\d{2}\s?(AM|PM)?$/i.test(text)) return true;
 
-    // 2.2 Guest Name exact match or repetition
-    const lowerText = text.toLowerCase();
+    // 4.3 Guest Name repetition
     const lowerName = guestName.toLowerCase();
-
     if (text.trim() === guestName) return true;
     if (text.includes(guestName + " " + guestName)) return true;
 
-    // 2.3 System/Right Sidebar Noise ("Report this guest", "AirCover")
+    // 4.4 System/Right Sidebar Noise
     const systemPhrases = [
       "report this guest", "visit the help centre", "aircover for hosts",
       "joined airbnb in", "listing no longer exists", "show profile",
@@ -647,7 +658,7 @@ function extractMessageData() {
     ];
     if (systemPhrases.some(p => lowerText.includes(p))) return true;
 
-    // 2.4 Exact matches & System Messages
+    // 4.5 Exact matches & System Messages
     const exactMatches = [
       "Today", "Yesterday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
       "Calendar", "Listings", "Messages", "All", "Unread", "Superhost Ambassador",
@@ -663,17 +674,13 @@ function extractMessageData() {
     return false;
   };
 
-  // 3. Extract Text from Scoped Area
+  // 5. Extract Text
   const allTextElements = [...mainChatArea.querySelectorAll('div[dir="ltr"], div[dir="rtl"], span, p')]
     .filter(el => {
       if (el.closest("#host-genie-message-box")) return false;
-      // Explicitly ignore known sidebars if they somehow exist inside (shouldn't happen with new logic, but safety)
-      if (el.closest('section[aria-label*="About"]')) return false;
-      if (el.closest('section[aria-label*="Reservation"]')) return false;
-
-      if (headerArea && headerArea.contains(el)) return false;
-      if (el.closest('h1, h2, h3, header')) return false;
       if (el.closest('form') || el.closest('textarea')) return false;
+      // Filter header elements
+      if (el.tagName.match(/H[1-6]/)) return false;
 
       return true;
     });

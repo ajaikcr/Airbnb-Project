@@ -572,28 +572,51 @@ function extractMessageData() {
   // Find the last message content
   // Airbnb messages are usually in divs. We look for the main chat container or just the last few text blocks.
 
-  // 1. ANCHOR STRATEGY: Find the "Type a message" box to locate the active chat container
-  // This guarantees we are in the main chat and not the sidebar.
+  // 1. ANCHOR STRATEGY: Find the "Type a message" box.
   const inputBox = document.querySelector('textarea[placeholder*="message"], div[contenteditable="true"], textarea[aria-label*="message"]');
 
-  // If no input box is found, we might not be in an active chat or it's loading.
-  // We can try to fall back to the main role, but the input box is the most reliable anchor.
-  const mainChatArea = inputBox?.closest('main') ||
-    inputBox?.closest('div[role="main"]') ||
-    document.querySelector('div[aria-label="Messages"] > div:not([style*="display: none"]) > div:not(:first-child)') ||
-    document.querySelector('main');
+  // Helper to find the "Middle Column" (The Chat Area)
+  // Logic: It must contain the guest header, but MUST NOT contain the sidebars.
+  const getMiddleColumn = (startNode) => {
+    let current = startNode;
+    while (current && current !== document.body) {
+      // 1. Check if we went too high (hit the area containing sidebars)
+      const hasLeftSidebar = current.querySelector('[aria-label="Threads"], button[aria-label="All"]');
+      const hasRightSidebar = current.querySelector('section[aria-label*="About"], section[aria-label*="Reservation"]');
 
+      if (hasLeftSidebar || hasRightSidebar) {
+        // We went too high!
+        // This loop structure is tricky. If we find a sidebar, we can't use this node.
+        // We really should have returned the previous node if it had a header.
+        // BUT, usually the header is INSIDE the middle column.
+        // So: If current has header AND NO sidebar => Good.
+      }
+
+      const hasHeader = current.querySelector('h2, h1, div[data-testid="header-container"]');
+      const isTooBig = current.querySelector('[aria-label="Threads"]') || current.querySelector('section[aria-label*="Reservation"]');
+
+      if (hasHeader && !isTooBig) {
+        return current; // Found it! Contains header, but no sidebars.
+      }
+
+      current = current.parentElement;
+    }
+    // Fallback if structure is weird
+    return startNode?.closest('main') || document.body;
+  };
+
+  const mainChatArea = getMiddleColumn(inputBox);
   if (!mainChatArea) return;
 
   // 1.1 Scoped Guest Name Detection
-  // Only look for the name header WITHIN this confirmed chat area.
+  // Only look for the name header WITHIN this confirmed middle column.
   const nameHeader = mainChatArea.querySelector('h2, h1, div[data-testid*="header"] h2');
   let guestName = nameHeader?.innerText?.trim() || "Guest";
 
-  // Cleanup name (remove status like "checking out")
+  // Cleanup name
   const nameParts = guestName.split(/\n/)[0].trim().split(/\s+/);
   if (nameParts.length > 1 && nameParts[0] === nameParts[1]) {
-    guestName = nameParts[0]; // Fix "Nabhas Nabhas"
+    guestName = nameParts[0];
   } else {
     guestName = nameParts.length > 3 ? nameParts.slice(0, 2).join(" ") : guestName;
   }
@@ -605,21 +628,18 @@ function extractMessageData() {
 
   // 2. Define Noise Filtering (Strict)
   const isNoise = (text) => {
-    // 2.1 Timestamps (e.g. 8:16 PM, 22:50, 08:30)
+    // 2.1 Timestamps
     if (/^\d{1,2}:\d{2}\s?(AM|PM)?$/i.test(text)) return true;
 
-    // 2.2 Guest Name exact match or repetition including with "Booker"
+    // 2.2 Guest Name exact match or repetition
     const lowerText = text.toLowerCase();
     const lowerName = guestName.toLowerCase();
 
-    // Exact name match
     if (text.trim() === guestName) return true;
-    // "Name Name" repetition
     if (text.includes(guestName + " " + guestName)) return true;
-    // "Name Booker" or "Guest Name"
     if (lowerText.includes(lowerName) && (lowerText.includes("booker") || lowerText.includes("guest") || lowerText.includes("translation"))) return true;
 
-    // 2.3 Exact matches for dates and UI buttons
+    // 2.3 Exact matches & System Messages
     const exactMatches = [
       "Today", "Yesterday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
       "Calendar", "Listings", "Messages", "All", "Unread", "Superhost Ambassador",
@@ -630,11 +650,7 @@ function extractMessageData() {
       "Translation on", "Translation off", "Enter", "Shift + Enter"
     ];
     if (exactMatches.includes(text)) return true;
-
-    // 2.4 Prefixes using startsWith is risky for short text, better to use regex or checks
     if (text.startsWith("Read Conversation with")) return true;
-    if (text.startsWith("Last message sent")) return true;
-    if (text.startsWith("You're now matched with")) return true;
 
     return false;
   };

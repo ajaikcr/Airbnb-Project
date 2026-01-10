@@ -598,6 +598,22 @@ function extractMessageData() {
   const mainChatArea = getActiveChatContainer(inputBox);
   if (!mainChatArea) return;
 
+  // 1. Gather Forbidden Terms from Sidebars (RIGHT SIDE ONLY)
+  // We scan the Right Sidebar for text to BLOCK from the chat extraction.
+  const sidebars = document.querySelectorAll('section[aria-label="Reservation details"], section[aria-label="UserProfile"], aside');
+  const forbiddenTerms = new Set();
+
+  sidebars.forEach(s => {
+    // Don't scan the main chat area by accident
+    if (s.contains(inputBox)) return;
+
+    const lines = s.innerText.split("\n");
+    lines.forEach(line => {
+      const t = line.trim().toLowerCase();
+      if (t.length > 3) forbiddenTerms.add(t);
+    });
+  });
+
   // 3. Guest Name Detection (Fixed Duplication "Nabhas Nabhas")
   let guestName = "Guest";
   const potentialHeaders = mainChatArea.querySelectorAll('h2, h1, div[data-testid="header-container"] h2');

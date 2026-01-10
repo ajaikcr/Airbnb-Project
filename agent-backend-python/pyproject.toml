@@ -1,0 +1,23 @@
+[project]
+name = "agent-backend-python"
+version = "0.1.0"
+description = "Agent backend for Airbnb HostGenie"
+readme = "README.md"
+requires-python = ">=3.13"
+dependencies = [
+    "openhands-sdk",
+    "openhands-tools",
+    "python-dotenv>=1.2.1",
+    "fastapi>=0.95.2",
+    "uvicorn>=0.22.0",
+]
+
+[tool.uv.workspace]
+members = [
+    "agent-sdk/openhands-sdk",
+    "agent-sdk/openhands-tools",
+]
+
+[tool.uv.sources]
+openhands-sdk = { workspace = true }
+openhands-tools = { workspace = true }

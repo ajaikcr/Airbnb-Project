@@ -31,23 +31,7 @@ class AgentAction(BaseModel):
     action: str
     context: str
 
-# --- STUB LLM LOGIC ---
-
-async def mock_llm_response(context: str):
-    """
-    Simulates an LLM generating a full response.
-    """
-    full_text = (
-        "Hello! I've analyzed the listing and the guest's message. "
-        "Based on your current pricing and the guest's inquiry about weekend availability, "
-        "I suggest offering a small 5% discount if they book for 3 nights. "
-        "\n\nSuggested Reply: 'Hi! Thanks for reaching out. We'd love to host you. "
-        "Since you're looking at a weekend stay, I can offer a special rate if you extend to Monday!'"
-    )
-    
-    # Simulate "thinking" time
-    await asyncio.sleep(2)
-    return full_text
+from agent import generate_agent_response
 
 # --- ENDPOINTS ---
 
@@ -68,7 +52,7 @@ async def handle_generate_reply(action: AgentAction):
     """
     logger.info(f"Action Requested: {action.action} | Context Length: {len(action.context)} chars")
     
-    response_text = await mock_llm_response(action.context)
+    response_text = await generate_agent_response(action.context)
     return {"reply": response_text}
 
 if __name__ == "__main__":

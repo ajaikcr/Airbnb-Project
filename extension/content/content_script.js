@@ -575,41 +575,35 @@ function extractMessageData() {
   // 1. ANCHOR STRATEGY: Find the "Type a message" box.
   const inputBox = document.querySelector('textarea[placeholder*="message"], div[contenteditable="true"], textarea[aria-label*="message"]');
 
-  // Helper to find the "Middle Column" (The Chat Area)
-  // Logic: It must contain the guest header, but MUST NOT contain the sidebars.
-  const getMiddleColumn = (startNode) => {
+  // Helper to find the "Active Chat Container" (Middle Column)
+  // Strategy: Climb up. If the PARENT has a sidebar, then WE are the chat column. STOP.
+  const getActiveChatContainer = (startNode) => {
     let current = startNode;
-    while (current && current !== document.body) {
-      // 1. Check if we went too high (hit the area containing sidebars)
-      const hasLeftSidebar = current.querySelector('[aria-label="Threads"], button[aria-label="All"]');
-      const hasRightSidebar = current.querySelector('section[aria-label*="About"], section[aria-label*="Reservation"]');
+    // Climb up until we handle the parent checks
+    while (current && current.parentElement && current.parentElement !== document.body) {
+      const parent = current.parentElement;
+      // Check if parent contains the MAIN navigation/sidebar elements
+      const hasSidebar = parent.querySelector('[aria-label="Threads"], nav[aria-label="Messages"], section[aria-label*="Listings"]');
 
-      if (hasLeftSidebar || hasRightSidebar) {
-        // We went too high!
-        // This loop structure is tricky. If we find a sidebar, we can't use this node.
-        // We really should have returned the previous node if it had a header.
-        // BUT, usually the header is INSIDE the middle column.
-        // So: If current has header AND NO sidebar => Good.
+      if (hasSidebar) {
+        // The parent contains a sidebar. 
+        // If 'current' (our prospective column) does NOT have that sidebar, then 'current' is the isolated Chat Column.
+        const selfHasSidebar = current.querySelector('[aria-label="Threads"], nav[aria-label="Messages"]');
+        if (!selfHasSidebar) {
+          return current;
+        }
       }
-
-      const hasHeader = current.querySelector('h2, h1, div[data-testid="header-container"]');
-      const isTooBig = current.querySelector('[aria-label="Threads"]') || current.querySelector('section[aria-label*="Reservation"]');
-
-      if (hasHeader && !isTooBig) {
-        return current; // Found it! Contains header, but no sidebars.
-      }
-
-      current = current.parentElement;
+      current = parent;
     }
-    // Fallback if structure is weird
+    // Fallback: just return main or body if logical isolation failed
     return startNode?.closest('main') || document.body;
   };
 
-  const mainChatArea = getMiddleColumn(inputBox);
+  const mainChatArea = getActiveChatContainer(inputBox);
   if (!mainChatArea) return;
 
   // 1.1 Scoped Guest Name Detection
-  // Only look for the name header WITHIN this confirmed middle column.
+  // Only look for the name header WITHIN this isolated column.
   const nameHeader = mainChatArea.querySelector('h2, h1, div[data-testid*="header"] h2');
   let guestName = nameHeader?.innerText?.trim() || "Guest";
 
@@ -619,6 +613,13 @@ function extractMessageData() {
     guestName = nameParts[0];
   } else {
     guestName = nameParts.length > 3 ? nameParts.slice(0, 2).join(" ") : guestName;
+  }
+
+  // Filter out if "Guest Name" is actually "Messages" (Page Title)
+  if (guestName === "Messages") {
+    // Try to find a better header inside the container, ignoring the top-level H1
+    const subHeader = mainChatArea.querySelector('div[data-testid="header-container"] h2');
+    if (subHeader) guestName = subHeader.innerText.trim();
   }
 
   // 1.2 Identify Header to Exclude
@@ -637,9 +638,16 @@ function extractMessageData() {
 
     if (text.trim() === guestName) return true;
     if (text.includes(guestName + " " + guestName)) return true;
-    if (lowerText.includes(lowerName) && (lowerText.includes("booker") || lowerText.includes("guest") || lowerText.includes("translation"))) return true;
 
-    // 2.3 Exact matches & System Messages
+    // 2.3 System/Right Sidebar Noise ("Report this guest", "AirCover")
+    const systemPhrases = [
+      "report this guest", "visit the help centre", "aircover for hosts",
+      "joined airbnb in", "listing no longer exists", "show profile",
+      "payment", "payout", "resolution centre", "translation on", "translation off"
+    ];
+    if (systemPhrases.some(p => lowerText.includes(p))) return true;
+
+    // 2.4 Exact matches & System Messages
     const exactMatches = [
       "Today", "Yesterday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday",
       "Calendar", "Listings", "Messages", "All", "Unread", "Superhost Ambassador",
@@ -647,7 +655,7 @@ function extractMessageData() {
       "Show details", "Edit", "Learn More", "Select Certificate",
       "Smartcard / Token User Pin", "Return to Inbox", "Write a message...", "Send",
       "Skip to Last Message (Ctrl-e)", "Skip to Typing Your Message (Ctrl-m)",
-      "Translation on", "Translation off", "Enter", "Shift + Enter"
+      "Enter", "Shift + Enter", "Guest", "Host"
     ];
     if (exactMatches.includes(text)) return true;
     if (text.startsWith("Read Conversation with")) return true;
@@ -656,23 +664,15 @@ function extractMessageData() {
   };
 
   // 3. Extract Text from Scoped Area
-  // Targeted search: message bubbles often have specific classes or structures.
-  // We'll look for all text containers but explicitly strictly exclude the others.
-
-  const sidebar = document.querySelector('nav, aside, [aria-label="Threads"], [aria-label="All messages"]');
-
   const allTextElements = [...mainChatArea.querySelectorAll('div[dir="ltr"], div[dir="rtl"], span, p')]
     .filter(el => {
       if (el.closest("#host-genie-message-box")) return false;
-      // Double safety: if we somehow selected sidebar
-      if (sidebar && sidebar.contains(el)) return false;
-      // Exclude Header
+      // Explicitly ignore known sidebars if they somehow exist inside (shouldn't happen with new logic, but safety)
+      if (el.closest('section[aria-label*="About"]')) return false;
+      if (el.closest('section[aria-label*="Reservation"]')) return false;
+
       if (headerArea && headerArea.contains(el)) return false;
-
-      // Filter out small labels inside headers if headerArea failed
       if (el.closest('h1, h2, h3, header')) return false;
-
-      // Filter out utility text near input box
       if (el.closest('form') || el.closest('textarea')) return false;
 
       return true;

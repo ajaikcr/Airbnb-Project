@@ -475,8 +475,62 @@ function extractListingEditorData() {
   };
 
   // -----------------------------
-  // NEW: Collect ALL other labels
+  // LOCATION EXTRACTION (Listing Editor)
   // -----------------------------
+  const getLocationData = () => {
+    let locData = { lat: null, lng: null, text: null };
+
+    // 1. Find Location Section
+    // Look for a heading "Location" and find the map nearby
+    const headings = [...document.querySelectorAll('h2, h3, div')];
+    const locationHeader = headings.find(h => h.innerText?.trim() === "Location");
+
+    // Fallback: look for map directly
+    const mapImg = document.querySelector('img[src*="maps.googleapis"]');
+    const mapLink = document.querySelector('a[href*="maps.google"]');
+
+    if (mapImg) {
+      // src="...center=10.05,76.54&..."
+      const match = mapImg.src.match(/center=([-\d.]+),([-\d.]+)/);
+      if (match) {
+        locData.lat = match[1];
+        locData.lng = match[2];
+      }
+      // Alt text often has address
+      if (mapImg.alt && mapImg.alt.length > 5) {
+        locData.text = mapImg.alt;
+      }
+    }
+
+    if (!locData.lat && mapLink) {
+      const match = mapLink.href.match(/@([-\d.]+),([-\d.]+)/) || mapLink.href.match(/q=([-\d.]+),([-\d.]+)/);
+      if (match) {
+        locData.lat = match[1];
+        locData.lng = match[2];
+      }
+    }
+
+    // Text Fallback if map alt failed
+    if (!locData.text && locationHeader) {
+      // Try next sibling or closest text container
+      // This is tricky in React/Airbnb DOM. 
+      // We might just rely on the global 'Location' card scrape we do below in 'getValueByLabel("Location")'
+      const possibleText = getValueByLabel("Location");
+      if (possibleText) locData.text = possibleText;
+    }
+
+    // Final attempt: getValueByLabel "Location" if we haven't checked it yet
+    if (!locData.text) {
+      locData.text = getValueByLabel("Location") || null;
+    }
+
+    // If we only have text, return that. If we have coords, return object.
+    if (!locData.lat && !locData.text) return null;
+
+    // Return structured object if possible, or just text if that's all we have (for backward compat)
+    // But implementation plan says object.
+    return locData;
+  };
   const getAllOtherDetails = () => {
     const details = {};
     const allDivs = [...document.querySelectorAll("div")];
@@ -512,6 +566,8 @@ function extractListingEditorData() {
     return details;
   };
 
+  const locObj = getLocationData();
+
   const listingData = {
     title: getValueByLabel("Title"),
     propertyType: getValueByLabel("Property type"),
@@ -522,12 +578,12 @@ function extractListingEditorData() {
     houseRules: getValueByLabel("House rules"),
     guestSafety: getValueByLabel("Guest safety"),
     cancellationPolicy: getValueByLabel("Cancellation policy"),
-    location: getValueByLabel("Location"),
+    location: locObj || getValueByLabel("Location"), // Fallback to simple text if robust fails
     aboutHost: getValueByLabel("About the host"),
     coHosts: getValueByLabel("Co-hosts"),
     bookingSettings: getValueByLabel("Booking settings"),
     customLink: getValueByLabel("Custom link"),
-    amenities: getAmenitiesList(),
+    amenities: getAmenitiesList() || [],
     extraDetails: getAllOtherDetails(), // Capture everything else reliably
     extractedAt: new Date().toISOString(),
     source: "listing-editor"

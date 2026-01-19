@@ -1037,7 +1037,19 @@ function injectHostGeniePanel(data = {}) {
     : `<p><strong>Actual:</strong> <span>N/A</span></p>`;
 
   box.innerHTML = `
-    <div style="padding:14px">
+    <!-- Toggle Handle -->
+    <div id="host-genie-toggle-calendar" style="
+      position: absolute; left: -30px; top: 20px; 
+      width: 30px; height: 40px; background: #ff385c; 
+      color: white; display: flex; align-items: center; 
+      justify-content: center; border-radius: 8px 0 0 8px; 
+      cursor: pointer; box-shadow: -4px 0 10px rgba(0,0,0,0.1);
+      font-weight: bold; font-size: 16px;
+    ">
+      ${isPanelMinimized ? "◀" : "▶"}
+    </div>
+
+    <div id="host-genie-content-calendar" style="padding:14px; transition: opacity 0.3s; ${isPanelMinimized ? "opacity: 0; pointer-events: none;" : ""}">
       <h3>Host Genie – Pricing Insight</h3>
       <p><strong>Airbnb:</strong> ₹${price}</p>
       ${originalRow}
@@ -1052,15 +1064,40 @@ function injectHostGeniePanel(data = {}) {
   Object.assign(box.style, {
     position: "fixed",
     top: "120px",
-    right: "420px",
+    right: "24px",
     width: "260px",
     background: "#fff",
     borderRadius: "12px",
     boxShadow: "0 12px 30px rgba(0,0,0,0.15)",
-    zIndex: "999999"
+    zIndex: "999999",
+    transform: isPanelMinimized ? "translateX(250px)" : "translateX(0)",
+    transition: "transform 0.4s cubic-bezier(0.19, 1, 0.22, 1)",
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
   });
 
   document.body.appendChild(box);
+
+  // Toggle Listener
+  document.getElementById("host-genie-toggle-calendar")?.addEventListener("click", () => {
+    isPanelMinimized = !isPanelMinimized;
+    const box = document.getElementById("host-genie-price-box");
+    const toggle = document.getElementById("host-genie-toggle-calendar");
+    const content = document.getElementById("host-genie-content-calendar");
+
+    if (box && toggle && content) {
+      if (isPanelMinimized) {
+        box.style.transform = "translateX(250px)";
+        toggle.innerText = "◀";
+        content.style.opacity = "0";
+        content.style.pointerEvents = "none";
+      } else {
+        box.style.transform = "translateX(0)";
+        toggle.innerText = "▶";
+        content.style.opacity = "1";
+        content.style.pointerEvents = "auto";
+      }
+    }
+  });
   document.getElementById("host-genie-download-price-btn")?.addEventListener("click", downloadConsolidatedData);
 }
 
@@ -1085,41 +1122,85 @@ function injectListingPanel(data = null) {
       : "View details";
 
   box.innerHTML = `
-  <div style="padding:14px">
-    <h3 style="color:#ff385c;font-size:14px">
-      Host Genie – Listing Insights
-    </h3>
+    <!-- Toggle Handle -->
+    <div id="host-genie-toggle-listing" style="
+      position: absolute; left: -30px; top: 20px; 
+      width: 30px; height: 40px; background: #ff385c; 
+      color: white; display: flex; align-items: center; 
+      justify-content: center; border-radius: 8px 0 0 8px; 
+      cursor: pointer; box-shadow: -4px 0 10px rgba(0,0,0,0.1);
+      font-weight: bold; font-size: 16px;
+    ">
+      ${isPanelMinimized ? "◀" : "▶"}
+    </div>
 
-    <p><strong>Title:</strong> ${listingData.title || "Not set"}</p>
-    <p><strong>Property:</strong> ${listingData.propertyType || "Not set"}</p>
-    <p><strong>Guests:</strong> ${listingData.numberOfGuests || "Not set"}</p>
-    <p><strong>Price:</strong> ${listingData.pricing || "Not set"}</p>
-    <p><strong>Amenities:</strong> ${amenitiesText}</p>
-    <button id="host-genie-download-listing-btn" style="
-        margin-top: 10px; padding: 8px; width: 100%; 
-        background: #ff385c; color: white; border: none; 
-        border-radius: 8px; cursor: pointer; font-weight: bold;
-    ">Download for AI</button>
-    <small style="color:#6b7280; display: block; margin-top: 5px;">
-      ${listingData.source}
-    </small>
-  </div>
-`;
+    <div id="host-genie-content-listing" style="padding:14px; transition: opacity 0.3s; ${isPanelMinimized ? "opacity: 0; pointer-events: none;" : ""}">
+      <h3 style="color:#ff385c;font-size:14px">
+        Host Genie – Listing Insights
+      </h3>
+
+      <p><strong>Title:</strong> ${listingData.title || "Not set"}</p>
+      <p><strong>Property:</strong> ${listingData.propertyType || "Not set"}</p>
+      <p><strong>Guests:</strong> ${listingData.numberOfGuests || "Not set"}</p>
+      <p><strong>Price:</strong> ${listingData.pricing || "Not set"}</p>
+      <p><strong>Amenities:</strong> ${amenitiesText}</p>
+      <button id="host-genie-download-listing-btn" style="
+          margin-top: 10px; padding: 8px; width: 100%; 
+          background: #ff385c; color: white; border: none; 
+          border-radius: 8px; cursor: pointer; font-weight: bold;
+      ">Download for AI</button>
+      <button id="host-genie-fill-listing-btn" style="
+          margin-top: 10px; padding: 8px; width: 100%; 
+          background: #222; color: white; border: none; 
+          border-radius: 8px; cursor: pointer; font-weight: bold;
+      ">Fill with AI</button>
+      <small style="color:#6b7280; display: block; margin-top: 5px;">
+        ${listingData.source}
+      </small>
+    </div>
+  `;
 
 
-  // Styling (unchanged)
-  box.style.position = "fixed";
-  box.style.top = "120px";
-  box.style.right = "24px";
-  box.style.width = "300px";
-  box.style.background = "#fff";
-  box.style.border = "1px solid #e5e7eb";
-  box.style.borderRadius = "12px";
-  box.style.boxShadow = "0 12px 30px rgba(0,0,0,0.15)";
-  box.style.zIndex = "999999";
+  Object.assign(box.style, {
+    position: "fixed",
+    top: "120px",
+    right: "24px",
+    width: "300px",
+    background: "#fff",
+    border: "1px solid #e5e7eb",
+    borderRadius: "12px",
+    boxShadow: "0 12px 30px rgba(0,0,0,0.15)",
+    zIndex: "999999",
+    transform: isPanelMinimized ? "translateX(290px)" : "translateX(0)",
+    transition: "transform 0.4s cubic-bezier(0.19, 1, 0.22, 1)",
+    fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif"
+  });
 
   document.body.appendChild(box);
+
+  // Toggle Listener
+  document.getElementById("host-genie-toggle-listing")?.addEventListener("click", () => {
+    isPanelMinimized = !isPanelMinimized;
+    const box = document.getElementById("host-genie-listing-box");
+    const toggle = document.getElementById("host-genie-toggle-listing");
+    const content = document.getElementById("host-genie-content-listing");
+
+    if (box && toggle && content) {
+      if (isPanelMinimized) {
+        box.style.transform = "translateX(290px)";
+        toggle.innerText = "◀";
+        content.style.opacity = "0";
+        content.style.pointerEvents = "none";
+      } else {
+        box.style.transform = "translateX(0)";
+        toggle.innerText = "▶";
+        content.style.opacity = "1";
+        content.style.pointerEvents = "auto";
+      }
+    }
+  });
   document.getElementById("host-genie-download-listing-btn")?.addEventListener("click", downloadConsolidatedData);
+  document.getElementById("host-genie-fill-listing-btn")?.addEventListener("click", generateAiDescription);
 }
 
 
@@ -1415,10 +1496,16 @@ chrome.runtime.onMessage.addListener((msg) => {
       if (responseBox) responseBox.scrollTop = responseBox.scrollHeight;
     }
 
-    // 2. Fill the Airbnb message box
-    fillAirbnbMessageBox(reply);
+    // 2. Fill the appropriate box based on page type
+    if (window.hostGenieContext.pageType === "listing-editor") {
+      // In the Listing Editor, we might want to fill the "Listing description" by default
+      // or handle a more structured payload if the AI provides one.
+      fillListingField("Listing description", reply);
+    } else {
+      fillAirbnbMessageBox(reply);
+    }
 
-    console.log("[HostGenie] AI Reply received and message box filled");
+    console.log(`[HostGenie] AI Reply received and ${window.hostGenieContext.pageType === "listing-editor" ? "listing field" : "message box"} filled`);
   }
 
   if (msg.type === "AI_REPLY_ERROR") {
@@ -1461,5 +1548,103 @@ function fillAirbnbMessageBox(text) {
   messageBox.dispatchEvent(changeEvent);
 
   console.log("[HostGenie] Message box filled successfully");
+}
+
+/**
+ * Sends a request to the background script to generate a listing description.
+ */
+function generateAiDescription() {
+  const context = getConsolidatedDataText();
+  const promptHint = "\n\nTask: Generate a professional and engaging listing description based on the details above. Return ONLY the description text.";
+
+  chrome.runtime.sendMessage({
+    type: "ACTION_GENERATE_REPLY",
+    payload: context + promptHint
+  });
+
+  console.log("[HostGenie] AI Description generation requested");
+}
+
+/**
+ * Fills a specific field in the Listing Editor based on its label.
+ * @param {string} labelText - The exact or partial label text (e.g., "Listing description")
+ * @param {string} value - The text to fill.
+ */
+function fillListingField(labelText, value) {
+  try {
+    // 1. Find the header/label element
+    const labels = [...document.querySelectorAll('h1, h2, h3, div, span, label')];
+    const targetHeader = labels.find(el => el.innerText?.trim() === labelText);
+
+    if (!targetHeader) {
+      console.warn(`[HostGenie] Could not find field with label: ${labelText}`);
+      // Fallback: search for any textarea if labelText is "Listing description"
+      if (labelText === "Listing description") {
+        const fallback = document.querySelector('textarea, [role="textbox"]');
+        if (fallback) return injectText(fallback, value);
+      }
+      return;
+    }
+
+    // 2. Find the input element (textarea or contenteditable) nearby
+    // Usually it's a sibling or inside a sibling container
+    let container = targetHeader.parentElement;
+    let input = null;
+    let attempts = 0;
+
+    while (container && !input && attempts < 5) {
+      input = container.querySelector('textarea, [role="textbox"], [contenteditable="true"]');
+      if (!input) {
+        // Look in next siblings of the container
+        let next = container.nextElementSibling;
+        while (next && !input) {
+          input = next.querySelector('textarea, [role="textbox"], [contenteditable="true"]') ||
+            (next.matches('textarea, [role="textbox"]') ? next : null);
+          next = next.nextElementSibling;
+        }
+      }
+      container = container.parentElement;
+      attempts++;
+    }
+
+    if (input) {
+      injectText(input, value);
+    } else {
+      console.warn(`[HostGenie] Found label "${labelText}" but no input field nearby.`);
+    }
+  } catch (e) {
+    console.error("[HostGenie] Error filling listing field", e);
+  }
+}
+
+/**
+ * Helper to inject text into an element and trigger events.
+ */
+function injectText(element, text) {
+  element.focus();
+
+  if (element.tagName === "TEXTAREA" || element.tagName === "INPUT") {
+    element.value = text;
+  } else {
+    element.innerText = text;
+  }
+
+  // Trigger events for React/Airbnb state
+  element.dispatchEvent(new Event('input', { bubbles: true }));
+  element.dispatchEvent(new Event('change', { bubbles: true }));
+
+  // Specific React-internal value tracker update if needed
+  // This is a common trick to bypass React's virtual DOM sync for native inputs
+  const nativeInputValueSetter = Object.getOwnPropertyDescriptor(
+    element.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLDivElement.prototype,
+    element.tagName === "TEXTAREA" ? "value" : "innerText"
+  )?.set;
+
+  if (nativeInputValueSetter) {
+    nativeInputValueSetter.call(element, text);
+    element.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+
+  console.log(`[HostGenie] Injected text into ${element.tagName}`);
 }
 

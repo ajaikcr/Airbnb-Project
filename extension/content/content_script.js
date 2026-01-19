@@ -172,11 +172,13 @@ function extractCalendarData() {
     let price = null;
     let originalPrice = null;
 
-    // 1. Try Sidebar "New listing price" (Specific selected date)
-    // Find all containers with both the label and a price pattern
+    // 1. Try Sidebar Pricing Card (Specific selected date)
+    // Broaden labels to handle variations like "Last-minute price", "Base price", "Multiple prices", etc.
+    const pricingLabels = ["New listing price", "Last-minute price", "Base price", "Listing price", "Standard price", "Multiple prices"];
+
     const candidates = [...document.querySelectorAll("div, section, aside, span")]
       .filter(el =>
-        el.innerText?.includes("New listing price") &&
+        pricingLabels.some(label => el.innerText?.includes(label)) &&
         /₹\s?[\d,]+/.test(el.innerText)
       );
 
@@ -188,22 +190,43 @@ function extractCalendarData() {
       const container = candidates[0];
       const text = container.innerText;
 
-      // 1. Current Price
-      const m = text.match(/₹\s?([\d,]+)/);
-      if (m) price = parseInt(m[1].replace(/,/g, ""), 10);
+      // 1. Current Price (Airbnb Price)
+      // Support ranges: "₹2,445 – ₹2,574" -> we take the range string or first price
+      const priceMatches = [...text.matchAll(/₹\s?([\d,]+)/g)]
+        .map(m => m[1].replace(/,/g, ""));
 
-      // 2. Original Price (Strikethrough) - Look for line-through style or s tag
-      // Simple heuristic: find another price in the same container that is DIFFERENT from the main price
-      // and likely larger (since it's a discount)
+      if (priceMatches.length > 0) {
+        // If it's a range in the UI, we might want the range text or just the first number
+        // For the AI context, we'll try to represent the current active price(s)
+        price = parseInt(priceMatches[0], 10);
+
+        // If it's exactly two prices and looks like a range (no strikethrough logic yet)
+        // But usually, strikethrough is handled separately.
+      }
+
+      // 2. Original Price (Actual Price / Strikethrough)
+      // Look for all prices. If there's a discount, the "Actual" price is usually the UN-discounted one (larger).
+      // However, if it's a RANGE (₹A - ₹B), we need to be careful not to mistake ₹B for an original price of ₹A.
       const allPrices = [...text.matchAll(/₹\s?([\d,]+)/g)]
         .map(m => parseInt(m[1].replace(/,/g, ""), 10));
 
-      // The strikethrough price is usually the larger one
       if (allPrices.length > 1) {
-        // Sort descending, the highest is likely the original price before discount
-        allPrices.sort((a, b) => b - a);
-        if (allPrices[0] !== price) {
-          originalPrice = allPrices[0];
+        // Sort descending
+        const uniquePrices = [...new Set(allPrices)];
+        uniquePrices.sort((a, b) => b - a);
+
+        // If there's a price significantly larger than the others, it's likely the strikethrough
+        // In the user's screenshot: "₹2,445 – ₹2,574" and then a separate strikethrough "₹2,574"
+        // Wait, if it's a range, "Actual" might not exist OR it might be a discount on the range.
+        // If the same price appears multiple times, one might be the strikethrough.
+
+        // Heuristic: If we find a price that is NOT part of the primary "Current Price" display
+        // In Airbnb, strikethrough prices often have a specific style, but we are using text.
+        if (uniquePrices[0] > price) {
+          originalPrice = uniquePrices[0];
+        } else if (allPrices.length > priceMatches.length) {
+          // If we have more price matches than what's in the main range, the extra one is likely the discount source
+          originalPrice = allPrices[allPrices.length - 1];
         }
       }
     }
@@ -219,13 +242,22 @@ function extractCalendarData() {
     // 3. Dates Extraction
     let selectedDates = getSelectedDatesFromURL();
 
+    // Enhanced DOM Detection: Look for selected dates in the grid
+    // Airbnb usually marks selected dates with specific classes or ARIA attributes
+    const domSelectedDates = [...document.querySelectorAll('[aria-checked="true"], [aria-selected="true"]')];
+    if (domSelectedDates.length > 0) {
+      // If we find selected dates in the DOM, we should ideally use them to complement the URL
+      // This is complex as we need to map the DOM element back to a date string.
+      // For now, let's stick to the URL and Pill as they are more reliable for parsing,
+      // but we'll use the presence of DOM selection to "force" another attempt if URI is empty.
+    }
+
     // Fallback: Try to read dates from the sidebar pill (e.g. "Dec 27 – 28")
     if (!selectedDates.length) {
       const datePill = [...document.querySelectorAll("div, button")]
         .find(el => {
           const t = el.innerText?.trim();
           // Look for pattern like "Mmm DD - Mmm DD" or "Mmm DD"
-          // Simple check: contains a month name and digits, and small length
           return t && /^[a-zA-Z]{3}\s\d{1,2}/.test(t) && t.length < 20;
         });
 
@@ -234,9 +266,10 @@ function extractCalendarData() {
       }
     }
 
+    // Expanded Weekend Logic: Friday (5), Saturday (6), or Sunday (0)
     const hasWeekend = selectedDates.some(d => {
       const day = new Date(d).getDay();
-      return day === 0 || day === 6;
+      return day === 0 || day === 6 || day === 5;
     });
 
     if (price || attempts >= MAX_ATTEMPTS) {
@@ -246,8 +279,11 @@ function extractCalendarData() {
       if (signature === lastCalendarSignature) return;
       lastCalendarSignature = signature;
 
+      const availableDates = getAvailableDatesFromGrid();
+
       window.hostGenieContext.calendar = {
         selectedDates,
+        availableDates, // NEW
         basePrice: price,
         originalPrice,
         hasWeekend
@@ -1100,6 +1136,78 @@ function cleanupListingUI() {
 }
 
 // ----------------------------------------
+// GRID AVAILABILITY PARSER
+// ----------------------------------------
+function getAvailableDatesFromGrid() {
+  try {
+    const available = [];
+    const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
+    const monthIndexMap = {};
+    monthNames.forEach((m, i) => { monthIndexMap[m] = i; monthIndexMap[m.slice(0, 3)] = i; });
+
+    const candidates = [...document.querySelectorAll('button, [role="button"], [role="gridcell"]')];
+    const now = new Date();
+    // Use local midnight to compare dates safely
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const currentYear = today.getFullYear();
+
+    candidates.forEach(el => {
+      const label = el.getAttribute('aria-label') || "";
+      const text = el.innerText || "";
+
+      // Look for month in label OR text
+      const monthFound = monthNames.find(m =>
+        label.includes(m) || label.includes(m.slice(0, 3)) ||
+        text.includes(m) || text.includes(m.slice(0, 3))
+      );
+
+      const hasNumber = /\d{1,2}/.test(label) || /\d{1,2}/.test(text);
+      if (!monthFound || !hasNumber) return;
+
+      // 1. Basic Availability checks
+      const isDisabled = el.getAttribute('aria-disabled') === 'true' || el.disabled;
+      const isBlocked = label.toLowerCase().includes("blocked") ||
+        text.toLowerCase().includes("blocked") ||
+        label.includes("Not available");
+
+      // 2. "Grayed Out" (Past Dates or Manually Blocked)
+      // Airbnb often uses low opacity or specific colors for unavailable dates
+      const style = window.getComputedStyle(el);
+      const isGrayed = parseFloat(style.opacity) < 0.7 ||
+        style.color.includes("176, 176, 176") || // #b0b0b0
+        style.backgroundColor.includes("247, 247, 247");
+
+      if (!isDisabled && !isBlocked && !isGrayed) {
+        // Parse day
+        const dayMatch = label.match(/(\d{1,2})/) || text.match(/(\d{1,2})/);
+        if (!dayMatch) return;
+
+        const day = parseInt(dayMatch[1], 10);
+        const monthIdx = monthIndexMap[monthFound.includes(" ") ? monthFound.split(" ")[0] : monthFound] || monthIndexMap[monthFound.slice(0, 3)];
+
+        const yearMatch = label.match(/\d{4}/) || text.match(/\d{4}/);
+        const year = yearMatch ? parseInt(yearMatch[0], 10) : currentYear;
+
+        const dateObj = new Date(year, monthIdx, day);
+
+        // 3. Past Date Filter (Don't include dates before today)
+        if (!isNaN(dateObj.getTime()) && dateObj >= today) {
+          const y = dateObj.getFullYear();
+          const m = String(dateObj.getMonth() + 1).padStart(2, '0');
+          const d = String(dateObj.getDate()).padStart(2, '0');
+          available.push(`${y}-${m}-${d}`);
+        }
+      }
+    });
+
+    return [...new Set(available)].sort();
+  } catch (e) {
+    console.error("[HostGenie] Error parsing grid availability", e);
+    return [];
+  }
+}
+
+// ----------------------------------------
 // URL DATE PARSER
 // ----------------------------------------
 function getSelectedDatesFromURL() {
@@ -1205,6 +1313,7 @@ function getConsolidatedDataText() {
     text += `originalPrice: ${ctx.calendar.originalPrice || "N/A"}\n`;
     text += `hasWeekend: ${ctx.calendar.hasWeekend}\n`;
     text += `selectedDates: ${JSON.stringify(ctx.calendar.selectedDates)}\n`;
+    text += `availableDates: ${JSON.stringify(ctx.calendar.availableDates || [])}\n`;
   } else {
     text += "No calendar data extracted yet.\n";
   }

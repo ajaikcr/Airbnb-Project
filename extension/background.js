@@ -7,8 +7,8 @@
  */
 
 const CONFIG = {
-  AGENT_SERVER_URL: "http://localhost:3001/agent",
-  GENERATE_REPLY_ENDPOINT: "http://localhost:3001/agent/generate-reply"
+  AGENT_SERVER_URL: "http://140.245.195.214:3001/agent",
+  GENERATE_REPLY_ENDPOINT: "http://140.245.195.214:3001/agent/generate-reply"
 };
 
 class HostGenieBridge {

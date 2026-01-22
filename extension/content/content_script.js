@@ -275,11 +275,22 @@ function extractCalendarData() {
     if (price || attempts >= MAX_ATTEMPTS) {
       clearInterval(interval);
 
-      const signature = JSON.stringify({ price, originalPrice, selectedDates });
+      // 🕵️ Get Month Context for Signature
+      // We run a quick pre-check to see which month we are looking at
+      const tempAvailable = getAvailableDatesFromGrid(selectedDates);
+      const activeMonthName = window.hostGenieContext.calendar.activeMonth || "unknown";
+
+      const signature = JSON.stringify({
+        price,
+        originalPrice,
+        selectedDates,
+        activeMonthInfo: activeMonthName + (new Date().getMonth()) // Force refresh on scroll if month changes
+      });
+
       if (signature === lastCalendarSignature) return;
       lastCalendarSignature = signature;
 
-      const availableDates = getAvailableDatesFromGrid();
+      const availableDates = tempAvailable;
 
       window.hostGenieContext.calendar = {
         selectedDates,
@@ -327,10 +338,18 @@ function observeListingChanges() {
 
   let debounce;
 
-  listingObserver = new MutationObserver(() => {
+  listingObserver = new MutationObserver((mutations) => {
     const pageType = window.hostGenieContext.pageType;
 
     if (pageType !== "listing" && pageType !== "listing-editor") return;
+
+    // 🛡️ IGNORE mutations from our own UI
+    const isOurUI = mutations.every(m =>
+      m.target.closest?.("#host-genie-listing-box") ||
+      m.target.closest?.("#host-genie-price-box") ||
+      m.target.closest?.("#host-genie-message-box")
+    );
+    if (isOurUI) return;
 
     clearTimeout(debounce);
     debounce = setTimeout(() => {
@@ -356,18 +375,38 @@ function observeListingChanges() {
         propertyType: data.propertyType || null,
         pricing: data.pricing || null,
         guests,
-        amenitiesCount
+        amenitiesCount,
+        description: (data.description || "").slice(0, 20), // Include snippet of description
+        locationText: (data.location?.text || data.location || "").slice(0, 20)
       });
 
       if (signature === lastListingSignature) return;
       lastListingSignature = signature;
 
-      window.hostGenieContext.listing = data;
+      // ✅ SMART MERGE: Keep old values if new ones are null/empty
+      const current = window.hostGenieContext.listing || {};
+      const merged = { ...current };
+
+      for (const [key, value] of Object.entries(data)) {
+        // Only overwrite if the new value is actually useful (not null, not "Not set", and not empty)
+        if (value && value !== "Not set") {
+          merged[key] = value;
+        }
+      }
+
+      // Special handling for amenities to avoid losing the list
+      if (data.amenities && data.amenities.length > 0) {
+        merged.amenities = data.amenities;
+      } else {
+        merged.amenities = current.amenities || [];
+      }
+
+      window.hostGenieContext.listing = merged;
 
       cleanupListingUI();
       injectListingPanel();
 
-      console.log("[HostGenie] Listing data updated", data);
+      console.log("[HostGenie] Listing data updated (Smart Merge)", window.hostGenieContext.listing);
       logConsolidatedState();
 
     }, 700);
@@ -487,6 +526,9 @@ function extractListingEditorData() {
   const getValueByLabel = label => {
     // Return everything after the first line (label) joined by pipes
     // Use a more relaxed search for card labels
+    const target = label.toLowerCase();
+
+    // 1. Try card strategy (labels in the same div area)
     const card = [...document.querySelectorAll("div")]
       .find(el => {
         const text = el.innerText?.trim() || "";
@@ -494,20 +536,51 @@ function extractListingEditorData() {
         if (lines.length === 0) return false;
 
         const firstLine = lines[0].toLowerCase();
-        const target = label.toLowerCase();
 
         // Match if first line is exactly the label or starts with it
         return firstLine === target || firstLine.startsWith(target + " ") || firstLine.startsWith(target + "\n");
       });
 
-    if (!card) return null;
+    if (card) {
+      const lines = card.innerText
+        .split("\n")
+        .map(l => l.trim())
+        .filter(Boolean);
+      return lines.length > 1 ? lines.slice(1).join(" | ") : null;
+    }
 
-    const lines = card.innerText
-      .split("\n")
-      .map(l => l.trim())
-      .filter(Boolean);
+    // 2. Sub-page strategy (Header -> Sibling text)
+    // Find a header (h1, h2, h3) or bold text that matches the label
+    const headers = [...document.querySelectorAll('h1, h2, h3, div[role="heading"], strong, label')];
+    const targetHeader = headers.find(el => el.innerText?.trim().toLowerCase() === target);
 
-    return lines.length > 1 ? lines.slice(1).join(" | ") : null;
+    if (targetHeader) {
+      // Strategy A: Next sibling that has text
+      let sibling = targetHeader.nextElementSibling;
+      while (sibling) {
+        const txt = sibling.innerText?.trim();
+        if (txt && txt.length > 0 && !txt.toLowerCase().includes("add details")) {
+          return txt.split("\n")[0]; // Just the first paragraph/line
+        }
+        sibling = sibling.nextElementSibling;
+      }
+
+      // Strategy B: Siblings of the parent (common in React)
+      let parent = targetHeader.parentElement;
+      let depth = 0;
+      while (parent && depth < 2) {
+        const textNodes = [...parent.children]
+          .filter(el => el !== targetHeader && !el.contains(targetHeader))
+          .map(el => el.innerText?.trim())
+          .filter(txt => txt && txt.length > 5 && !txt.toLowerCase().includes(target));
+
+        if (textNodes.length > 0) return textNodes[0].split("\n")[0];
+        parent = parent.parentElement;
+        depth++;
+      }
+    }
+
+    return null;
   };
 
   // -----------------------------
@@ -610,12 +683,12 @@ function extractListingEditorData() {
     pricing: getValueByLabel("Pricing"),
     availability: getValueByLabel("Availability"),
     numberOfGuests: getValueByLabel("Number of guests"),
-    description: getValueByLabel("Description"),
+    description: getValueByLabel("Description") || getValueByLabel("Listing description") || getValueByLabel("Your property"),
     houseRules: getValueByLabel("House rules"),
     guestSafety: getValueByLabel("Guest safety"),
     cancellationPolicy: getValueByLabel("Cancellation policy"),
-    location: locObj || getValueByLabel("Location"), // Fallback to simple text if robust fails
-    aboutHost: getValueByLabel("About the host"),
+    location: locObj || getValueByLabel("Location") || getValueByLabel("Where you’ll be"), // Fallback to simple text if robust fails
+    aboutHost: getValueByLabel("About the host") || getValueByLabel("Host profiles"),
     coHosts: getValueByLabel("Co-hosts"),
     bookingSettings: getValueByLabel("Booking settings"),
     customLink: getValueByLabel("Custom link"),
@@ -1143,6 +1216,13 @@ function injectListingPanel(data = null) {
       <p><strong>Property:</strong> ${listingData.propertyType || "Not set"}</p>
       <p><strong>Guests:</strong> ${listingData.numberOfGuests || "Not set"}</p>
       <p><strong>Price:</strong> ${listingData.pricing || "Not set"}</p>
+      <p><strong>Location:</strong> ${listingData.location?.text || listingData.location || "Not set"}</p>
+      <div style="margin-top: 8px;">
+        <label style="font-size: 11px; color: #717171; text-transform: uppercase; font-weight: bold;">Listing Description</label>
+        <p style="margin: 2px 0; font-size: 12px; max-height: 60px; overflow: hidden; text-overflow: ellipsis; display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;">
+          ${listingData.description || "Not set"}
+        </p>
+      </div>
       <p><strong>Amenities:</strong> ${amenitiesText}</p>
       <button id="host-genie-download-listing-btn" style="
           margin-top: 10px; padding: 8px; width: 100%; 
@@ -1219,7 +1299,7 @@ function cleanupListingUI() {
 // ----------------------------------------
 // GRID AVAILABILITY PARSER
 // ----------------------------------------
-function getAvailableDatesFromGrid() {
+function getAvailableDatesFromGrid(selectedDates = []) {
   try {
     const available = [];
     const monthNames = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -1228,9 +1308,47 @@ function getAvailableDatesFromGrid() {
 
     const candidates = [...document.querySelectorAll('button, [role="button"], [role="gridcell"]')];
     const now = new Date();
-    // Use local midnight to compare dates safely
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
     const currentYear = today.getFullYear();
+
+    let activeMonth = null;
+    let activeYear = currentYear;
+
+    // 1. PRIORITY: USE SELECTED DATE AS HINT
+    if (Array.isArray(selectedDates) && selectedDates.length > 0) {
+      const firstDate = new Date(selectedDates[0]);
+      if (!isNaN(firstDate.getTime())) {
+        activeMonth = monthNames[firstDate.getMonth()];
+        activeYear = firstDate.getFullYear();
+        // Tag context so we can use it in signature
+        window.hostGenieContext.calendar.activeMonth = `${activeMonth} ${activeYear}`;
+        console.log(`[HostGenie] Target Month (from Selection): ${activeMonth} ${activeYear}`);
+      }
+    }
+
+    // 2. FALLBACK: DETECT VISIBLE MONTH (Scroll-based)
+    if (!activeMonth) {
+      const headers = [...document.querySelectorAll('h1, h2, h3, [role="heading"]')];
+      const monthHeaders = headers.filter(h => {
+        const text = h.innerText?.trim() || "";
+        return monthNames.some(m => text.startsWith(m)) && text.length < 25;
+      });
+
+      if (monthHeaders.length > 0) {
+        // Pick the header that is most visible in the upper half of the viewport
+        const visibleHeader = monthHeaders.find(h => {
+          const rect = h.getBoundingClientRect();
+          return rect.top >= 0 && rect.top < 500;
+        }) || monthHeaders[0];
+
+        const headerText = visibleHeader.innerText.trim();
+        activeMonth = monthNames.find(m => headerText.includes(m));
+        const yearMatch = headerText.match(/\d{4}/);
+        if (yearMatch) activeYear = parseInt(yearMatch[0], 10);
+        window.hostGenieContext.calendar.activeMonth = `${activeMonth} ${activeYear}`;
+        console.log(`[HostGenie] Target Month (from Header Visibility): ${activeMonth} ${activeYear}`);
+      }
+    }
 
     candidates.forEach(el => {
       const label = el.getAttribute('aria-label') || "";
@@ -1267,7 +1385,13 @@ function getAvailableDatesFromGrid() {
         const monthIdx = monthIndexMap[monthFound.includes(" ") ? monthFound.split(" ")[0] : monthFound] || monthIndexMap[monthFound.slice(0, 3)];
 
         const yearMatch = label.match(/\d{4}/) || text.match(/\d{4}/);
-        const year = yearMatch ? parseInt(yearMatch[0], 10) : currentYear;
+        // SMART YEAR INHERITANCE: If no year in label, use activeYear (Crucial for March/Future)
+        const year = yearMatch ? parseInt(yearMatch[0], 10) : activeYear;
+
+        // 🎯 FILTER BY ACTIVE MONTH (per user request)
+        if (activeMonth) {
+          if (monthFound !== activeMonth || year !== activeYear) return;
+        }
 
         const dateObj = new Date(year, monthIdx, day);
 
